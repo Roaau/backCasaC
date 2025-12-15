@@ -1,4 +1,4 @@
-import { migrarContrasenas } from "migrarContrasenas.js";
+import { migrarContrasenas } from "./migrarContrasenas.js";
 
 router.post("/migrar", async (req, res) => {
   const { SECRET_KEY } = req.headers;
