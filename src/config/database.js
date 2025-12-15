@@ -1,23 +1,25 @@
+// src/database.js
 import { Sequelize } from "sequelize";
 import dotenv from "dotenv";
+import dns from "dns";
 
+// Cargar variables de entorno
 dotenv.config();
 
-// Detecta si estamos en producción (Render)
-const isProduction = process.env.NODE_ENV === "production";
+// Forzar resolución IPv4 primero para evitar problemas de conexión en Render
+dns.setDefaultResultOrder("ipv4first");
 
-// Configuración Sequelize
+// Crear la conexión a la base de datos
 const sequelize = new Sequelize(process.env.DATABASE_URL, {
   dialect: "postgres",
-  logging: false,
-  dialectOptions: isProduction
-    ? {
-        ssl: {
-          require: true,
-          rejectUnauthorized: false, // permite certificados autofirmados de Supabase
-        },
-      }
-    : {},
+  protocol: "postgres",
+  logging: false, // poner true si quieres ver logs de SQL
+  dialectOptions: {
+    ssl: {
+      require: true,
+      rejectUnauthorized: false, // necesario para Supabase
+    },
+  },
 });
 
 export default sequelize;
