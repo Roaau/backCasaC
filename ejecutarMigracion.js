@@ -1,4 +1,4 @@
-import "../database/connection.js";
+import "src/config/database.js";
 import { migrarContrasenas } from "migrarContrasenas.js";
 
 (async () => {
