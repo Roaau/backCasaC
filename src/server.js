@@ -15,7 +15,7 @@ import ventasRoutes from "./routes/ventasRoutes.js";
 import reportesRoutes from "./routes/reportesRoutes.js";
 import inventarioRoutes from "./routes/inventarioRoutes.js";
 
-// 📌 MODELADO (SE IMPORTAN PARA REGISTRO)
+// 📌 MODELOS
 import "./models/CajaModel.js";
 import "./models/MovimientoCaja.js";
 import "./models/Venta.js";
@@ -39,13 +39,11 @@ app.use("/api/reportes", reportesRoutes);
 app.use("/api/inventario", inventarioRoutes);
 
 // =====================
-// 🔌 CONEXIÓN BD + SYNC
+// 🔌 CONEXIÓN BD
 // =====================
 try {
   await sequelize.authenticate();
-  console.log("🔌 Conexión a PostgreSQL correcta.");
-  await sequelize.sync({ alter: true });
-  console.log("📦 Modelos sincronizados.");
+  console.log("🔌 Conectado a Supabase PostgreSQL");
 } catch (err) {
   console.error("❌ Error en BD:", err);
 }
@@ -58,7 +56,9 @@ app.get("/api", (req, res) => {
 });
 
 // =====================
-// 🚀 LEVANTAR SERVER
+// 🚀 SERVER
 // =====================
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`🚀 Servidor: http://localhost:${PORT}`));
+app.listen(PORT, () =>
+  console.log(`🚀 Servidor: http://localhost:${PORT}`)
+);
