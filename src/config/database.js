@@ -13,6 +13,10 @@ dns.setDefaultResultOrder("ipv4first");
 const sequelize = new Sequelize(process.env.DATABASE_URL, {
   dialect: "postgres",
   protocol: "postgres",
+  activo: {
+    type: DataTypes.BOOLEAN,
+    defaultValue: true
+  },
   logging: false, // poner true si quieres ver logs de SQL
   dialectOptions: {
     ssl: {
