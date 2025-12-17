@@ -18,6 +18,6 @@ router.post("/", createProducto);
 router.put("/:id", updateProducto);
 
 // Ruta para eliminar
-router.delete("/productos/:id", deleteProducto);
+router.delete("/:id", deleteProducto);
 
 export default router;
