@@ -72,7 +72,7 @@ export const deleteProducto = async (req, res) => {
     // Opción B: Si quisieras borrado lógico (Solo cambiar activo a false)
     const [updated] = await Producto.update({ activo: false }, { where: { producto_id: id } });
 
-    if (filasEliminadas === 0) {
+    if (updated === 0) {
         return res.status(404).json({ error: "Producto no encontrado" });
     }
 
