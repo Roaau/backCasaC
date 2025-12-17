@@ -7,10 +7,6 @@ const Venta = sequelize.define("Venta", {
     primaryKey: true,
     autoIncrement: true
   },
-  folio: {
-    type: DataTypes.INTEGER,
-    allowNull: false
-  },
   usuario_id: {
     type: DataTypes.INTEGER,
     allowNull: false
