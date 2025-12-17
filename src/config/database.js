@@ -1,5 +1,5 @@
 // src/database.js
-import { Sequelize } from "sequelize";
+import { Sequelize, DataTypes } from "sequelize";
 import dotenv from "dotenv";
 import dns from "dns";
 
