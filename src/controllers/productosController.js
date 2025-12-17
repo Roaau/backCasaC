@@ -5,7 +5,8 @@ export const getAll = async (req, res) => {
   try {
     // Ordenamos por ID para que no salten al editar
     const productos = await Producto.findAll({
-      order: [['producto_id', 'DESC']] 
+      order: [['producto_id', 'DESC']], 
+      where: {activo: true}
     });
     res.json(productos);
   } catch (err) {
