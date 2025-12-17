@@ -18,15 +18,16 @@ export const crearVenta = async (req, res) => {
       throw new Error("Faltan detalles o el ID del usuario.");
     }
 
-    // ================================
-    // 📌 CALCULAR FOLIO CONSECUTIVO
-    // ================================
-    const ultimaVenta = await Venta.findOne({
-      order: [['folio', 'DESC']],
-      transaction: t
+    const existente = await Venta.findOne({
+    where: { uuid: req.body.uuid },
+    transaction: t
     });
+    
+    if (existente) {
+      await t.rollback();
+      return res.status(409).json({ error: 'Venta duplicada' });
+    }
 
-    const folio = ultimaVenta ? (ultimaVenta.folio + 1) : 1;
 
     // =======================================
     // 📌 CREAR VENTA (CABECERA)
