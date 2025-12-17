@@ -35,7 +35,6 @@ export const crearVenta = async (req, res) => {
     const nuevaVenta = await Venta.create({
       usuario_id,
       total,
-      folio,
       tipo_venta,
       pedido_numero
     }, { transaction: t });
