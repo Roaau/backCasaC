@@ -18,15 +18,15 @@ export const crearVenta = async (req, res) => {
       throw new Error("Faltan detalles o el ID del usuario.");
     }
 
-    const existente = await Venta.findOne({
-    where: { uuid: req.body.uuid },
-    transaction: t
-    });
+//    const existente = await Venta.findOne({
+//    where: { uuid: req.body.uuid },
+//    transaction: t
+//    });
     
-    if (existente) {
-      await t.rollback();
-      return res.status(409).json({ error: 'Venta duplicada' });
-    }
+//    if (existente) {
+//      await t.rollback();
+//      return res.status(409).json({ error: 'Venta duplicada' });
+//    }
 
 
     // =======================================
@@ -75,7 +75,7 @@ export const crearVenta = async (req, res) => {
         usuario_id,
         tipo_movimiento: "INGRESO",
         monto: total,
-        concepto: `Venta folio ${folio}`
+        concepto: `Venta folio ${nuevaVenta.folio}`
       }, { transaction: t });
     }
 
@@ -84,7 +84,7 @@ export const crearVenta = async (req, res) => {
     // =======================================
     await t.commit();
 
-    res.json({ msg: "Venta registrada", folio, venta_id: nuevaVenta.venta_id });
+    res.json({ msg: "Venta registrada", folio: nuevaVenta.folio, venta_id: nuevaVenta.venta_id });
 
   } catch (error) {
     await t.rollback();
