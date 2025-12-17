@@ -87,7 +87,7 @@ export const obtenerTotalesCaja = async (req, res) => {
     // ⚠️ SOLUCIÓN X2: Usamos SQL directo para sumar solo la tabla Ventas
     // Esto evita que Sequelize haga JOINS raros con DetalleVenta
     const ventasRaw = await sequelize.query(
-        `SELECT COALESCE(SUM(total), 0) as total FROM "Ventas" 
+        `SELECT COALESCE(SUM(total), 0) as total FROM "ventas" 
          WHERE fecha >= :fechaInicio`,
         { 
             replacements: { fechaInicio: caja.fecha_apertura },
