@@ -138,7 +138,8 @@ export const solicitarCodigoRegistro = async (req, res) => {
   try {
     await enviarCodigoRegistro({ destinatario: emailNorm, codigo });
     return res.json({ mensaje: 'Código enviado. Revisa tu correo (y la carpeta de spam).' });
-  } catch {
+  } catch (emailErr) {
+    console.error('[EMAIL ERROR solicitar-registro]', emailErr?.message || emailErr);
     await SolicitudRegistro.destroy({ where: { email: emailNorm, codigo } });
     return res.status(500).json({ mensaje: 'Error al enviar el correo. Verifica EMAIL_USER y EMAIL_PASS en el servidor.' });
   }
