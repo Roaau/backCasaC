@@ -117,15 +117,15 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 // Rate limiting — protección contra brute-force
 const loginLimit = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutos
-  max: 10,
+  windowMs: 15 * 60 * 1000,
+  max: 30,
   standardHeaders: true,
   legacyHeaders: false,
   message: { mensaje: 'Demasiados intentos de acceso. Espera 15 minutos e intenta de nuevo.' }
 });
 const otpLimit = rateLimit({
-  windowMs: 60 * 60 * 1000, // 1 hora
-  max: 5,
+  windowMs: 60 * 60 * 1000,
+  max: 20,
   standardHeaders: true,
   legacyHeaders: false,
   message: { mensaje: 'Demasiadas solicitudes de código. Espera una hora.' }
