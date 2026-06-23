@@ -56,7 +56,12 @@ export const crear = async (req, res) => {
     }
 
     // Registrar como movimiento de la caja activa
-    const cajaAbierta = await Caja.findOne({ where: { sucursal_id, fecha_cierre: null }, transaction: t });
+    // Busca por caja_id explícito si viene, o por sucursal_id + abierta
+    const { caja_id: cajaIdBody } = req.body;
+    const cajaAbierta = cajaIdBody
+      ? await Caja.findOne({ where: { caja_id: cajaIdBody, fecha_cierre: null }, transaction: t })
+      : await Caja.findOne({ where: { sucursal_id, fecha_cierre: null }, transaction: t });
+
     if (cajaAbierta) {
       await MovimientoCaja.create({
         caja_id: cajaAbierta.caja_id,
