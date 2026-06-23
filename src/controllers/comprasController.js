@@ -92,12 +92,12 @@ export const crearCompra = async (req, res) => {
           transaction: t
         });
         if (stock) {
-          await stock.update({ cantidad: stock.cantidad + Number(item.cantidad) }, { transaction: t });
+          await stock.update({ stock_actual: stock.stock_actual + Number(item.cantidad) }, { transaction: t });
         } else {
           await StockSucursal.create({
             producto_id:  item.producto_id,
             sucursal_id:  req.usuario.sucursal_id,
-            cantidad:     item.cantidad,
+            stock_actual: Number(item.cantidad),
             stock_minimo: 0
           }, { transaction: t });
         }
@@ -112,7 +112,7 @@ export const crearCompra = async (req, res) => {
     // Opcional: registrar egreso en la caja abierta
     if (descontar_de_caja) {
       const cajaAbierta = await CajaModel.findOne({
-        where: { sucursal_id: req.usuario.sucursal_id, estado: 'ABIERTA' }
+        where: { sucursal_id: req.usuario.sucursal_id, fecha_cierre: null }
       });
       if (cajaAbierta) {
         await MovimientoCaja.create({
