@@ -124,7 +124,7 @@ export const solicitarCodigoRegistro = async (req, res) => {
     return res.status(429).json({ mensaje: 'Ya enviamos un código a ese correo. Espera antes de solicitar otro.' });
   }
 
-  if (!process.env.RESEND_API_KEY) {
+  if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
     return res.status(503).json({
       mensaje: 'El servidor no tiene configurado el correo de salida. Contacta al proveedor del sistema.'
     });
@@ -362,7 +362,7 @@ export const solicitarResetContrasena = async (req, res) => {
   if (!user) return res.json(respuestaOk);
 
   // Necesita empresa con correo configurado
-  if (!process.env.RESEND_API_KEY) return res.json(respuestaOk);
+  if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS) return res.json(respuestaOk);
 
   // Limpia resets expirados
   await SolicitudReset.destroy({ where: { usuario: usuario.trim(), expira_en: { [Op.lt]: new Date() } } });

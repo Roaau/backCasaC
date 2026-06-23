@@ -1,9 +1,13 @@
-import { Resend } from "resend";
 import nodemailer from "nodemailer";
 
-const resend = new Resend(process.env.RESEND_API_KEY);
-// En Resend sin dominio verificado el from debe ser onboarding@resend.dev
-const FROM = process.env.RESEND_FROM || "SC POS <onboarding@resend.dev>";
+const crearTransporter = () => nodemailer.createTransport({
+  host:   process.env.EMAIL_HOST || 'smtp.gmail.com',
+  port:   Number(process.env.EMAIL_PORT) || 465,
+  secure: true,
+  auth:   { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS },
+});
+
+const FROM = () => process.env.EMAIL_FROM || `SC POS <${process.env.EMAIL_USER}>`;
 
 // ── Código de verificación de registro ───────────────────────────────────────
 export const enviarCodigoRegistro = async ({ destinatario, codigo }) => {
@@ -39,11 +43,9 @@ export const enviarCodigoRegistro = async ({ destinatario, codigo }) => {
 </div>
 </body></html>`;
 
-  await resend.emails.send({
-    from:    FROM,
-    to:      destinatario,
-    subject: 'Tu código de verificación — SC POS',
-    html,
+  await crearTransporter().sendMail({
+    from: FROM(), to: destinatario,
+    subject: 'Tu código de verificación — SC POS', html,
   });
 };
 
@@ -80,22 +82,18 @@ export const enviarCodigoReset = async ({ destinatario, codigo, nombreUsuario })
 </div>
 </body></html>`;
 
-  await resend.emails.send({
-    from:    FROM,
-    to:      destinatario,
-    subject: 'Restablece tu contraseña — SC POS',
-    html,
+  await crearTransporter().sendMail({
+    from: FROM(), to: destinatario,
+    subject: 'Restablece tu contraseña — SC POS', html,
   });
 };
 
 // ── Notificación al superadmin: nueva empresa pendiente ───────────────────────
 export const notificarNuevaEmpresa = async ({ razon_social, rfc, email_admin, empresa_id }) => {
-  if (!process.env.RESEND_API_KEY) return;
-  const destino = process.env.SUPERADMIN_EMAIL || "jorgeroaj411@gmail.com";
-
-  await resend.emails.send({
-    from:    FROM,
-    to:      destino,
+  if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS) return;
+  const destino = process.env.SUPERADMIN_EMAIL || process.env.EMAIL_USER;
+  await crearTransporter().sendMail({
+    from: FROM(), to: destino,
     subject: `[SC POS] Nueva empresa pendiente: ${razon_social}`,
     html: `<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8"></head>
 <body style="margin:0;padding:0;background:#f0f2f5;font-family:'Helvetica Neue',Arial,sans-serif;">
@@ -130,11 +128,9 @@ export const notificarNuevaEmpresa = async ({ razon_social, rfc, email_admin, em
 
 // ── Notificación al cliente: empresa aprobada ────────────────────────────────
 export const notificarEmpresaAprobada = async ({ destinatario, razon_social }) => {
-  if (!process.env.RESEND_API_KEY) return;
-
-  await resend.emails.send({
-    from:    FROM,
-    to:      destinatario,
+  if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS) return;
+  await crearTransporter().sendMail({
+    from: FROM(), to: destinatario,
     subject: 'Tu empresa fue activada — SC POS',
     html: `<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8"></head>
 <body style="margin:0;padding:0;background:#f0f2f5;font-family:'Helvetica Neue',Arial,sans-serif;">
@@ -165,16 +161,13 @@ export const notificarEmpresaAprobada = async ({ destinatario, razon_social }) =
 
 // ── Notificación al cliente: empresa rechazada ───────────────────────────────
 export const notificarEmpresaRechazada = async ({ destinatario, razon_social, motivo }) => {
-  if (!process.env.RESEND_API_KEY) return;
+  if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS) return;
   const motivoHtml = motivo
     ? `<div style="background:#fef2f2;border-left:4px solid #f87171;border-radius:0 8px 8px 0;padding:12px 16px;margin-top:16px;">
          <p style="margin:0;font-size:13px;color:#991b1b;"><strong>Motivo:</strong> ${motivo}</p>
-       </div>`
-    : '';
-
-  await resend.emails.send({
-    from:    FROM,
-    to:      destinatario,
+       </div>` : '';
+  await crearTransporter().sendMail({
+    from: FROM(), to: destinatario,
     subject: 'Tu solicitud en SC POS',
     html: `<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8"></head>
 <body style="margin:0;padding:0;background:#f0f2f5;font-family:'Helvetica Neue',Arial,sans-serif;">
@@ -182,14 +175,12 @@ export const notificarEmpresaRechazada = async ({ destinatario, razon_social, mo
   <div style="max-width:480px;margin:0 auto;border-radius:14px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,0.10);">
     <div style="background:#1e2227;padding:32px 40px;text-align:center;">
       <h1 style="margin:0;color:#fff;font-size:20px;">SC POS · Sistema de Punto de Venta</h1>
-      <p style="margin:6px 0 0;color:#9aa0a6;font-size:13px;">Estado de tu solicitud</p>
     </div>
     <div style="background:#fff;padding:40px;">
       <p style="margin:0 0 16px;font-size:14px;color:#555;line-height:1.6;">
         Tu solicitud para registrar <strong>${razon_social}</strong> no pudo ser procesada en este momento.
       </p>
       ${motivoHtml}
-      <p style="margin:20px 0 0;font-size:13px;color:#888;">Si crees que hay un error, contáctanos respondiendo este correo.</p>
     </div>
     <div style="background:#f8f9fa;border-top:1px solid #e8e8e8;padding:18px 40px;text-align:center;">
       <p style="margin:0;font-size:12px;color:#aaa;">SC POS · Sistema de Punto de Venta</p>
@@ -200,22 +191,18 @@ export const notificarEmpresaRechazada = async ({ destinatario, razon_social, mo
   });
 };
 
-// ── Factura CFDI (usa SMTP propio de cada ferretería) ─────────────────────────
+// ── Factura CFDI ──────────────────────────────────────────────────────────────
 export const enviarFacturaPorCorreo = async ({
-  destinatario,
-  cfdi,
-  transporterConfig = null,
-  logo_b64          = null,
-  nombre_negocio    = null,
+  destinatario, cfdi, transporterConfig = null, logo_b64 = null, nombre_negocio = null,
 }) => {
   const smtpOpts = transporterConfig ?? {
-    host:   process.env.EMAIL_HOST || 'smtp.gmail.com',
-    port:   Number(process.env.EMAIL_PORT) || 465,
+    host: process.env.EMAIL_HOST || 'smtp.gmail.com',
+    port: Number(process.env.EMAIL_PORT) || 465,
     secure: true,
-    auth:   { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS },
+    auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS },
   };
   const from    = transporterConfig?.from ?? process.env.EMAIL_FROM;
-  const negocio = nombre_negocio          ?? "SC POS";
+  const negocio = nombre_negocio ?? "SC POS";
   const transporter = nodemailer.createTransport(smtpOpts);
 
   const attachments = [];
@@ -230,40 +217,35 @@ export const enviarFacturaPorCorreo = async ({
   const total = Number(cfdi.total_venta).toLocaleString("es-MX", { style: "currency", currency: "MXN" });
 
   await transporter.sendMail({
-    from,
-    to: destinatario,
+    from, to: destinatario,
     subject: `Factura ${cfdi.folio_venta} — ${negocio}`,
     attachments,
     html: `<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8"></head>
 <body style="margin:0;padding:0;background:#f0f2f5;font-family:'Helvetica Neue',Arial,sans-serif;">
-<div style="padding:32px 16px;">
-<div style="max-width:600px;margin:0 auto;border-radius:12px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,0.10);">
+<div style="padding:32px 16px;"><div style="max-width:600px;margin:0 auto;border-radius:12px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,0.10);">
   <div style="background:#1e2227;padding:32px 40px;text-align:center;">${logoHtml}
     <h1 style="margin:0;color:#fff;font-size:22px;">${negocio}</h1>
     <p style="margin:6px 0 0;color:#9aa0a6;font-size:13px;">Factura Electrónica · CFDI 4.0</p>
   </div>
   <div style="background:#fff;padding:36px 40px;">
-    <p style="margin:0 0 10px;font-size:11px;font-weight:700;color:#9aa0a6;text-transform:uppercase;letter-spacing:1px;border-bottom:1px solid #f0f0f0;padding-bottom:8px;">Datos del Comprobante</p>
     <table style="width:100%;border-collapse:collapse;margin-bottom:24px;">
       <tr><td style="padding:9px 0;font-size:14px;color:#888;border-bottom:1px solid #f5f5f5;">Folio</td><td style="padding:9px 0;font-size:14px;font-weight:700;color:#1a1a1a;text-align:right;border-bottom:1px solid #f5f5f5;">${cfdi.folio_venta}</td></tr>
-      <tr><td style="padding:9px 0;font-size:14px;color:#888;border-bottom:1px solid #f5f5f5;">Fecha</td><td style="padding:9px 0;font-size:14px;font-weight:600;color:#1a1a1a;text-align:right;border-bottom:1px solid #f5f5f5;">${fecha}</td></tr>
-      <tr><td style="padding:9px 0;font-size:14px;color:#888;">Uso CFDI</td><td style="padding:9px 0;font-size:14px;font-weight:600;color:#1a1a1a;text-align:right;">${cfdi.uso_cfdi}</td></tr>
+      <tr><td style="padding:9px 0;font-size:14px;color:#888;">Fecha</td><td style="padding:9px 0;font-size:14px;font-weight:600;color:#1a1a1a;text-align:right;">${fecha}</td></tr>
     </table>
     <div style="background:#f0fdf4;border:1px solid #86efac;border-radius:10px;padding:18px 24px;margin-bottom:24px;">
       <table style="width:100%;border-collapse:collapse;">
-        <tr><td style="font-size:15px;color:#166534;font-weight:600;">Total Facturado</td><td style="font-size:28px;font-weight:800;color:#15803d;text-align:right;">${total}</td></tr>
+        <tr><td style="font-size:15px;color:#166534;font-weight:600;">Total</td><td style="font-size:28px;font-weight:800;color:#15803d;text-align:right;">${total}</td></tr>
       </table>
     </div>
     <div style="background:#f8f9fa;border:1px dashed #d0d0d0;border-radius:8px;padding:14px 18px;">
-      <p style="margin:0 0 4px;font-size:11px;color:#aaa;text-transform:uppercase;letter-spacing:1px;">UUID</p>
+      <p style="margin:0 0 4px;font-size:11px;color:#aaa;text-transform:uppercase;">UUID</p>
       <p style="margin:0;font-family:'Courier New',monospace;font-size:13px;color:#333;word-break:break-all;">${cfdi.cfdi_uuid}</p>
     </div>
   </div>
   <div style="background:#f8f9fa;border-top:1px solid #e8e8e8;padding:22px 40px;text-align:center;">
     <p style="margin:0;font-size:12px;color:#aaa;">Emitido por ${negocio}</p>
   </div>
-</div>
-</div>
+</div></div>
 </body></html>`,
   });
 };
