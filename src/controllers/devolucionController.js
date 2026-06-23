@@ -23,11 +23,52 @@ export const buscarVenta = async (req, res) => {
   }
 };
 
+export const listarVentasParaDevolucion = async (req, res) => {
+  try {
+    const empresa_id = req.usuario.empresa_id;
+    const { sucursal_id, q = '', page = 1, limit = 30 } = req.query;
+
+    const sucursalesEmpresa = await Sucursal.findAll({ where: { empresa_id }, attributes: ['sucursal_id'] });
+    const sucursalIds = sucursalesEmpresa.map(s => s.sucursal_id);
+
+    const whereSucursal = sucursal_id && sucursalIds.includes(Number(sucursal_id))
+      ? { sucursal_id: Number(sucursal_id) }
+      : { sucursal_id: { [Op.in]: sucursalIds } };
+
+    const where = { ...whereSucursal };
+    if (q) where.folio = { [Op.iLike]: `%${q}%` };
+
+    const offset = (Number(page) - 1) * Number(limit);
+    const { count, rows } = await Venta.findAndCountAll({
+      where, order: [['fecha', 'DESC']], limit: Number(limit), offset
+    });
+
+    const ventaIds = rows.map(v => v.venta_id);
+    const devsExistentes = ventaIds.length
+      ? await Devolucion.findAll({ where: { venta_id: { [Op.in]: ventaIds } }, attributes: ['venta_id'] })
+      : [];
+    const yaDevueltas = new Set(devsExistentes.map(d => d.venta_id));
+
+    res.json({
+      data: rows.map(v => ({ ...v.toJSON(), tiene_devolucion: yaDevueltas.has(v.venta_id) })),
+      total: count,
+      totalPaginas: Math.ceil(count / Number(limit))
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+};
+
 export const crear = async (req, res) => {
   const t = await sequelize.transaction();
   try {
     const { venta_id, folio_venta, motivo, usuario_id, sucursal_id, detalles } = req.body;
     if (!detalles?.length) throw new Error('Debe seleccionar al menos un producto a devolver');
+
+    if (venta_id) {
+      const yaDevuelta = await Devolucion.findOne({ where: { venta_id } });
+      if (yaDevuelta) throw new Error('Esta venta ya tiene una devolución registrada');
+    }
 
     const totalDevuelto = detalles.reduce((s, d) => s + Number(d.subtotal), 0);
 
