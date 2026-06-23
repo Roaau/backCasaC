@@ -1,17 +1,36 @@
 import nodemailer from "nodemailer";
 
-const crearTransporter = () => nodemailer.createTransport({
-  host:   process.env.EMAIL_HOST || 'smtp.gmail.com',
-  port:   Number(process.env.EMAIL_PORT) || 465,
-  secure: true,
-  auth:   { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS },
-});
+const BREVO_API = "https://api.brevo.com/v3/smtp/email";
+const SENDER    = { name: "SC POS", email: process.env.EMAIL_USER || "jorgeroaj411@gmail.com" };
 
-const FROM = () => process.env.EMAIL_FROM || `SC POS <${process.env.EMAIL_USER}>`;
+const enviarBrevo = async ({ to, subject, html }) => {
+  const res = await fetch(BREVO_API, {
+    method:  "POST",
+    headers: {
+      "api-key":      process.env.BREVO_API_KEY,
+      "content-type": "application/json",
+      "accept":       "application/json",
+    },
+    body: JSON.stringify({
+      sender:      SENDER,
+      to:          [{ email: to }],
+      subject,
+      htmlContent: html,
+    }),
+  });
+
+  if (!res.ok) {
+    const txt = await res.text();
+    throw new Error(`Brevo ${res.status}: ${txt}`);
+  }
+};
 
 // ── Código de verificación de registro ───────────────────────────────────────
 export const enviarCodigoRegistro = async ({ destinatario, codigo }) => {
-  const html = `<!DOCTYPE html>
+  await enviarBrevo({
+    to: destinatario,
+    subject: "Tu código de verificación — SC POS",
+    html: `<!DOCTYPE html>
 <html lang="es">
 <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
 <body style="margin:0;padding:0;background:#f0f2f5;font-family:'Helvetica Neue',Arial,sans-serif;">
@@ -41,17 +60,16 @@ export const enviarCodigoRegistro = async ({ destinatario, codigo }) => {
     </div>
   </div>
 </div>
-</body></html>`;
-
-  await crearTransporter().sendMail({
-    from: FROM(), to: destinatario,
-    subject: 'Tu código de verificación — SC POS', html,
+</body></html>`,
   });
 };
 
 // ── Código de restablecimiento de contraseña ─────────────────────────────────
 export const enviarCodigoReset = async ({ destinatario, codigo, nombreUsuario }) => {
-  const html = `<!DOCTYPE html>
+  await enviarBrevo({
+    to: destinatario,
+    subject: "Restablece tu contraseña — SC POS",
+    html: `<!DOCTYPE html>
 <html lang="es">
 <head><meta charset="UTF-8"></head>
 <body style="margin:0;padding:0;background:#f0f2f5;font-family:'Helvetica Neue',Arial,sans-serif;">
@@ -80,20 +98,16 @@ export const enviarCodigoReset = async ({ destinatario, codigo, nombreUsuario })
     </div>
   </div>
 </div>
-</body></html>`;
-
-  await crearTransporter().sendMail({
-    from: FROM(), to: destinatario,
-    subject: 'Restablece tu contraseña — SC POS', html,
+</body></html>`,
   });
 };
 
 // ── Notificación al superadmin: nueva empresa pendiente ───────────────────────
 export const notificarNuevaEmpresa = async ({ razon_social, rfc, email_admin, empresa_id }) => {
-  if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS) return;
-  const destino = process.env.SUPERADMIN_EMAIL || process.env.EMAIL_USER;
-  await crearTransporter().sendMail({
-    from: FROM(), to: destino,
+  if (!process.env.BREVO_API_KEY) return;
+  const destino = process.env.SUPERADMIN_EMAIL || SENDER.email;
+  await enviarBrevo({
+    to: destino,
     subject: `[SC POS] Nueva empresa pendiente: ${razon_social}`,
     html: `<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8"></head>
 <body style="margin:0;padding:0;background:#f0f2f5;font-family:'Helvetica Neue',Arial,sans-serif;">
@@ -101,7 +115,6 @@ export const notificarNuevaEmpresa = async ({ razon_social, rfc, email_admin, em
   <div style="max-width:480px;margin:0 auto;border-radius:14px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,0.10);">
     <div style="background:#1e2227;padding:32px 40px;text-align:center;">
       <h1 style="margin:0;color:#fff;font-size:20px;">SC POS · Panel de Control</h1>
-      <p style="margin:6px 0 0;color:#9aa0a6;font-size:13px;">Nueva solicitud de registro</p>
     </div>
     <div style="background:#fff;padding:40px;">
       <p style="margin:0 0 20px;font-size:15px;color:#333;">Nueva empresa pendiente de aprobación:</p>
@@ -114,7 +127,7 @@ export const notificarNuevaEmpresa = async ({ razon_social, rfc, email_admin, em
             <td style="padding:9px 0;font-size:14px;font-weight:700;color:#1a1a1a;text-align:right;">${email_admin}</td></tr>
       </table>
       <div style="background:#fffbeb;border-left:4px solid #f59e0b;border-radius:0 8px 8px 0;padding:12px 16px;">
-        <p style="margin:0;font-size:13px;color:#78350f;">Entra al panel de superadmin para aprobar o rechazar esta empresa (ID: ${empresa_id}).</p>
+        <p style="margin:0;font-size:13px;color:#78350f;">Entra al panel de superadmin para aprobar o rechazar (ID: ${empresa_id}).</p>
       </div>
     </div>
     <div style="background:#f8f9fa;border-top:1px solid #e8e8e8;padding:18px 40px;text-align:center;">
@@ -128,26 +141,25 @@ export const notificarNuevaEmpresa = async ({ razon_social, rfc, email_admin, em
 
 // ── Notificación al cliente: empresa aprobada ────────────────────────────────
 export const notificarEmpresaAprobada = async ({ destinatario, razon_social }) => {
-  if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS) return;
-  await crearTransporter().sendMail({
-    from: FROM(), to: destinatario,
-    subject: 'Tu empresa fue activada — SC POS',
+  if (!process.env.BREVO_API_KEY) return;
+  await enviarBrevo({
+    to: destinatario,
+    subject: "Tu empresa fue activada — SC POS",
     html: `<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8"></head>
 <body style="margin:0;padding:0;background:#f0f2f5;font-family:'Helvetica Neue',Arial,sans-serif;">
 <div style="padding:40px 16px;">
   <div style="max-width:480px;margin:0 auto;border-radius:14px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,0.10);">
     <div style="background:#1e2227;padding:32px 40px;text-align:center;">
       <h1 style="margin:0;color:#fff;font-size:20px;">SC POS · Sistema de Punto de Venta</h1>
-      <p style="margin:6px 0 0;color:#9aa0a6;font-size:13px;">Cuenta activada</p>
     </div>
     <div style="background:#fff;padding:40px;">
       <div style="background:#f0fdf4;border:2px solid #86efac;border-radius:12px;padding:24px;text-align:center;margin-bottom:28px;">
         <p style="margin:0;font-size:36px;">✅</p>
         <p style="margin:8px 0 0;font-size:18px;font-weight:700;color:#166534;">¡Empresa activada!</p>
       </div>
-      <p style="margin:0 0 16px;font-size:14px;color:#555;line-height:1.6;">
-        Hola, tu empresa <strong>${razon_social}</strong> ha sido verificada y activada en SC POS.<br><br>
-        Ya puedes iniciar sesión con tus credenciales y empezar a usar el sistema.
+      <p style="margin:0;font-size:14px;color:#555;line-height:1.6;">
+        Tu empresa <strong>${razon_social}</strong> ha sido verificada y activada.<br><br>
+        Ya puedes iniciar sesión y usar el sistema.
       </p>
     </div>
     <div style="background:#f8f9fa;border-top:1px solid #e8e8e8;padding:18px 40px;text-align:center;">
@@ -161,14 +173,14 @@ export const notificarEmpresaAprobada = async ({ destinatario, razon_social }) =
 
 // ── Notificación al cliente: empresa rechazada ───────────────────────────────
 export const notificarEmpresaRechazada = async ({ destinatario, razon_social, motivo }) => {
-  if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS) return;
+  if (!process.env.BREVO_API_KEY) return;
   const motivoHtml = motivo
-    ? `<div style="background:#fef2f2;border-left:4px solid #f87171;border-radius:0 8px 8px 0;padding:12px 16px;margin-top:16px;">
+    ? `<div style="background:#fef2f2;border-left:4px solid #f87171;padding:12px 16px;margin-top:16px;">
          <p style="margin:0;font-size:13px;color:#991b1b;"><strong>Motivo:</strong> ${motivo}</p>
-       </div>` : '';
-  await crearTransporter().sendMail({
-    from: FROM(), to: destinatario,
-    subject: 'Tu solicitud en SC POS',
+       </div>` : "";
+  await enviarBrevo({
+    to: destinatario,
+    subject: "Tu solicitud en SC POS",
     html: `<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8"></head>
 <body style="margin:0;padding:0;background:#f0f2f5;font-family:'Helvetica Neue',Arial,sans-serif;">
 <div style="padding:40px 16px;">
@@ -178,9 +190,8 @@ export const notificarEmpresaRechazada = async ({ destinatario, razon_social, mo
     </div>
     <div style="background:#fff;padding:40px;">
       <p style="margin:0 0 16px;font-size:14px;color:#555;line-height:1.6;">
-        Tu solicitud para registrar <strong>${razon_social}</strong> no pudo ser procesada en este momento.
-      </p>
-      ${motivoHtml}
+        Tu solicitud para <strong>${razon_social}</strong> no pudo ser procesada en este momento.
+      </p>${motivoHtml}
     </div>
     <div style="background:#f8f9fa;border-top:1px solid #e8e8e8;padding:18px 40px;text-align:center;">
       <p style="margin:0;font-size:12px;color:#aaa;">SC POS · Sistema de Punto de Venta</p>
@@ -191,15 +202,15 @@ export const notificarEmpresaRechazada = async ({ destinatario, razon_social, mo
   });
 };
 
-// ── Factura CFDI ──────────────────────────────────────────────────────────────
+// ── Factura CFDI (usa SMTP propio de cada ferretería) ─────────────────────────
 export const enviarFacturaPorCorreo = async ({
   destinatario, cfdi, transporterConfig = null, logo_b64 = null, nombre_negocio = null,
 }) => {
   const smtpOpts = transporterConfig ?? {
-    host: process.env.EMAIL_HOST || 'smtp.gmail.com',
-    port: Number(process.env.EMAIL_PORT) || 465,
+    host:   process.env.EMAIL_HOST || "smtp.gmail.com",
+    port:   Number(process.env.EMAIL_PORT) || 465,
     secure: true,
-    auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS },
+    auth:   { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS },
   };
   const from    = transporterConfig?.from ?? process.env.EMAIL_FROM;
   const negocio = nombre_negocio ?? "SC POS";
