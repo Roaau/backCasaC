@@ -143,9 +143,19 @@ const otpLimit = rateLimit({
 
 const server = http.createServer(app);
 
-const socketCorsOrigin = allowedOrigins ?? "*";
 const io = new Server(server, {
-  cors: { origin: socketCorsOrigin, methods: ["GET", "POST"] }
+  cors: {
+    origin: (origin, callback) => {
+      if (!origin) return callback(null, true);
+      if (!allowedOrigins) return callback(null, true);
+      const ok = allowedOrigins.includes(origin)
+        || /^https:\/\/[a-z0-9-]+\.vercel\.app$/.test(origin)
+        || origin === 'http://localhost:4200';
+      callback(ok ? null : new Error('CORS socket'), ok);
+    },
+    methods: ["GET", "POST"],
+    credentials: true,
+  }
 });
 
 // Middleware Socket.io: verifica JWT si viene — permite conexiones sin token (escáner móvil)
