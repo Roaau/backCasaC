@@ -5,6 +5,7 @@ export const enviarCodigoRegistro = async ({ destinatario, codigo }) => {
     host:   process.env.EMAIL_HOST || 'smtp.gmail.com',
     port:   Number(process.env.EMAIL_PORT) || 465,
     secure: true,
+    family: 4,
     auth:   { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS },
   });
   const from = process.env.EMAIL_FROM || `SC POS <${process.env.EMAIL_USER}>`;
@@ -69,6 +70,7 @@ export const enviarCodigoReset = async ({ destinatario, codigo, nombreUsuario })
     host:   process.env.EMAIL_HOST || 'smtp.gmail.com',
     port:   Number(process.env.EMAIL_PORT) || 465,
     secure: true,
+    family: 4,
     auth:   { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS },
   });
   const from = process.env.EMAIL_FROM || `SC POS <${process.env.EMAIL_USER}>`;
