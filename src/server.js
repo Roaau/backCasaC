@@ -257,6 +257,9 @@ try {
   console.log("🔌 Conexión a PostgreSQL correcta.");
   await sequelize.sync({ alter: process.env.NODE_ENV !== "production" });
   console.log("📦 Modelos sincronizados.");
+  // Columnas opcionales que pueden haber quedado NOT NULL en BD antigua
+  await sequelize.query("ALTER TABLE IF EXISTS sucursales ALTER COLUMN cp_sat DROP NOT NULL").catch(() => {});
+  await sequelize.query("ALTER TABLE IF EXISTS sucursales ALTER COLUMN direccion DROP NOT NULL").catch(() => {});
   server.listen(PORT, () => {
     console.log(`🚀 Servidor corriendo en: http://localhost:${PORT}`);
     // Backup automático diario a las 3 AM
