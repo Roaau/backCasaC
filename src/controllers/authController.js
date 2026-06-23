@@ -124,7 +124,7 @@ export const solicitarCodigoRegistro = async (req, res) => {
     return res.status(429).json({ mensaje: 'Ya enviamos un código a ese correo. Espera antes de solicitar otro.' });
   }
 
-  if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
+  if (!process.env.RESEND_API_KEY) {
     return res.status(503).json({
       mensaje: 'El servidor no tiene configurado el correo de salida. Contacta al proveedor del sistema.'
     });
@@ -362,7 +362,7 @@ export const solicitarResetContrasena = async (req, res) => {
   if (!user) return res.json(respuestaOk);
 
   // Necesita empresa con correo configurado
-  if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS) return res.json(respuestaOk);
+  if (!process.env.RESEND_API_KEY) return res.json(respuestaOk);
 
   // Limpia resets expirados
   await SolicitudReset.destroy({ where: { usuario: usuario.trim(), expira_en: { [Op.lt]: new Date() } } });
@@ -375,10 +375,8 @@ export const solicitarResetContrasena = async (req, res) => {
   const expira_en = new Date(Date.now() + 15 * 60 * 1000);
   await SolicitudReset.create({ usuario: usuario.trim(), codigo, expira_en });
 
-  // Obtiene el email del admin de la empresa
   const admin = await Usuario.findOne({ where: { empresa_id: user.empresa_id, rol_id: 1 } });
-  // Usa el correo del sistema como destinatario si no hay email de usuario
-  const destinatario = process.env.EMAIL_USER;
+  const destinatario = admin?.usuario || usuario.trim();
 
   try {
     await enviarCodigoReset({ destinatario, codigo, nombreUsuario: user.nombre });
