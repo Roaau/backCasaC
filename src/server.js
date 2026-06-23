@@ -97,6 +97,7 @@ MovimientoInventario.belongsTo(Sucursal, { foreignKey: 'sucursal_id' });
 Sucursal.hasMany(MovimientoInventario, { foreignKey: 'sucursal_id' });
 
 const app = express();
+app.set('trust proxy', 1);
 const allowedOrigins = process.env.FRONTEND_URL
   ? process.env.FRONTEND_URL.split(',').map(o => o.trim())
   : null;
