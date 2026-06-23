@@ -145,13 +145,13 @@ export const updateProducto = async (req, res) => {
     const [updated] = await Producto.update(data, { where: { producto_id: id, empresa_id } });
     if (!updated) return res.status(404).json({ error: "Producto no encontrado" });
 
-    // Si cambia el stock, actualizar también StockSucursal de esta sucursal
-    if (data.stock_actual !== undefined) {
-      const sucursal_id = req.usuario.sucursal_id || 1;
-      await StockSucursal.update(
-        { stock_actual: data.stock_actual },
-        { where: { producto_id: id, sucursal_id } }
-      );
+    // Si cambia stock_actual o stock_minimo, actualizar también StockSucursal de esta sucursal
+    const sucursal_id = req.usuario.sucursal_id || 1;
+    const stockUpdate = {};
+    if (data.stock_actual !== undefined) stockUpdate.stock_actual = data.stock_actual;
+    if (data.stock_minimo !== undefined) stockUpdate.stock_minimo = data.stock_minimo;
+    if (Object.keys(stockUpdate).length > 0) {
+      await StockSucursal.update(stockUpdate, { where: { producto_id: id, sucursal_id } });
     }
 
     const productoActualizado = await Producto.findByPk(id);

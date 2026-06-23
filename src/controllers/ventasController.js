@@ -70,15 +70,7 @@ export const crearVenta = async (req, res) => {
       where: { fecha_cierre: null, sucursal_id },
       transaction: t
     });
-    if (cajaActiva) {
-      await MovimientoCaja.create({
-        caja_id:        cajaActiva.caja_id,
-        usuario_id,
-        tipo_movimiento: "INGRESO",
-        monto:          total,
-        concepto:       `${tipo_venta === 'Pedido' ? 'Pedido' : 'Venta'} folio ${folio}`
-      }, { transaction: t });
-    }
+    // Las ventas se suman vía query directo en obtenerTotalesCaja — no crear INGRESO aquí para evitar doble conteo
 
     if (datos_cfdi) {
       const { receptor_rfc, receptor_nombre, receptor_cp, receptor_regimen, uso_cfdi, guardar_cliente } = datos_cfdi;
