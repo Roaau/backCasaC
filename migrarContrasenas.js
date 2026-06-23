@@ -3,11 +3,11 @@ import bcrypt from "bcrypt";
 
 const migrarContrasenas = async () => {
   try {
-    // Traer todos los usuarios
+    
     const usuarios = await Usuario.findAll();
 
     for (const user of usuarios) {
-      // Saltar si ya parece un hash (empieza con $2)
+      
       if (!user.contrasena.startsWith("$2")) {
         const hashed = await bcrypt.hash(user.contrasena, 10);
         user.contrasena = hashed;

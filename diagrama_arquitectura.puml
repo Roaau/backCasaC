@@ -1,0 +1,169 @@
+@startuml diagrama_arquitectura
+
+title Sistema POS e Inventario — Diagrama Arquitectónico
+
+skinparam {
+    defaultFontName  Arial
+    defaultFontSize  12
+    ArrowColor       #555555
+    ArrowThickness   1.5
+    linetype         ortho
+}
+
+skinparam node {
+    BackgroundColor #F5F5F5
+    BorderColor     #9E9E9E
+    FontStyle       bold
+}
+
+skinparam component {
+    BackgroundColor #FFFFFF
+    BorderColor     #555555
+}
+
+skinparam database {
+    BackgroundColor #E3F2FD
+    BorderColor     #1565C0
+}
+
+skinparam actor {
+    BackgroundColor #FFFFFF
+    BorderColor     #333333
+}
+
+' ═══════════════════════════════════════════════════════
+'  ACTORES / CLIENTES
+' ═══════════════════════════════════════════════════════
+actor "Cajero\n(PC escritorio)" as Cajero
+actor "Cliente con\ncelular Android/iPhone\n(escáner)" as Movil
+actor "Impresora\nde tickets" as Impresora
+
+' ═══════════════════════════════════════════════════════
+'  SERVIDOR LOCAL (misma máquina)
+' ═══════════════════════════════════════════════════════
+node "Servidor Local (Windows 11)" {
+
+    ' ─── CAPA DE PRESENTACIÓN ───────────────────────
+    node "Capa de Presentación\n:4200" #EDE7F6 {
+        component [Angular 17\nng serve] as Angular #D1C4E9
+        note right of Angular
+          SPA — Single Page Application
+          Módulos: Caja, Inventario,
+          Productos, Usuarios,
+          Reportes, Escáner
+        end note
+    }
+
+    ' ─── CAPA DE APLICACIÓN ─────────────────────────
+    node "Capa de Aplicación\n:3000" #E8F5E9 {
+
+        component [Express 5\nHTTP Server] as Express #C8E6C9
+
+        package "Rutas REST" {
+            component [/api/auth]       as RAuth
+            component [/api/productos]  as RProd
+            component [/api/usuarios]   as RUser
+            component [/api/ventas]     as RVent
+            component [/api/caja]       as RCaja
+            component [/api/inventario] as RInv
+            component [/api/reportes]   as RRep
+            component [/api/escaner]    as REsc
+        }
+
+        package "Controladores" {
+            component [AuthController]       as CAuth
+            component [ProductosController]  as CProd
+            component [UsuariosController]   as CUser
+            component [VentasController]     as CVent
+            component [CajaController]       as CCaja
+            component [InventarioController] as CInv
+            component [ReportesController]   as CRep
+            component [EscanerController]    as CEsc
+        }
+
+        package "Servicios / Librerías" {
+            component [bcrypt\n(hash contraseñas)] as Bcrypt  #FFF9C4
+            component [jsonwebtoken\n(JWT 8h)]      as JWT     #FFF9C4
+            component [Socket.IO\n(WebSocket)]      as SocketIO #FFF9C4
+            component [multer\n(upload imágenes)]   as Multer  #FFF9C4
+            component [zbar-wasm + jimp\n(lector códigos de barras)] as Zbar #FFF9C4
+        }
+
+        component [Sequelize 6\n(ORM)] as Sequelize #A5D6A7
+    }
+
+    ' ─── CAPA DE DATOS ──────────────────────────────
+    node "Capa de Datos" #E3F2FD {
+        database "PostgreSQL 18\npuerto 5432" as Postgres {
+            collections "usuarios"               as TUser
+            collections "productos"              as TProd
+            collections "ventas"                 as TVent
+            collections "detalle_ventas"         as TDet
+            collections "caja"                   as TCaja
+            collections "movimiento_caja"        as TMovC
+            collections "movimientos_inventario" as TMovI
+        }
+    }
+
+}
+
+' ═══════════════════════════════════════════════════════
+'  FLUJOS DE COMUNICACIÓN
+' ═══════════════════════════════════════════════════════
+
+' Cajero → Angular
+Cajero   -right-> Angular   : HTTP\n:4200
+
+' Angular → Express
+Angular  -right-> Express   : HTTP/REST\n:3000\n(JSON)
+
+' Celular → dos canales
+Movil    -down->  Angular   : HTTP :4200\n(página escáner)
+Movil    -right-> REsc      : POST /api/escaner/imagen\nmultipart (foto)\nHTTP :3000
+
+' WebSocket (escáner en tiempo real)
+Movil    ..>      SocketIO  : WebSocket\n(código-leido)
+Angular  ..>      SocketIO  : WebSocket\n(unirse-caja)
+
+' Impresora
+Cajero   -down->  Impresora : window.print()\n(impresión local)
+
+' Enrutamiento interno
+Express  --> RAuth
+Express  --> RProd
+Express  --> RUser
+Express  --> RVent
+Express  --> RCaja
+Express  --> RInv
+Express  --> RRep
+Express  --> REsc
+
+RAuth --> CAuth
+RProd --> CProd
+RUser --> CUser
+RVent --> CVent
+RCaja --> CCaja
+RInv  --> CInv
+RRep  --> CRep
+REsc  --> CEsc
+
+' Controladores → servicios
+CAuth --> Bcrypt
+CAuth --> JWT
+CUser --> Bcrypt
+CEsc  --> Multer
+CEsc  --> Zbar
+
+' Controladores → ORM
+CAuth --> Sequelize
+CProd --> Sequelize
+CUser --> Sequelize
+CVent --> Sequelize
+CCaja --> Sequelize
+CInv  --> Sequelize
+CRep  --> Sequelize
+
+' ORM → BD
+Sequelize -down-> Postgres : TCP\n:5432\n(SQL)
+
+@enduml

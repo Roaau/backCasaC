@@ -1,5 +1,7 @@
 import { DataTypes } from 'sequelize';
 import sequelize from '../config/database.js';
+import Producto from './Producto.js';
+import Usuario from './Usuario.js';
 
 const MovimientoInventario = sequelize.define('MovimientoInventario', {
   movimiento_id: {
@@ -7,32 +9,42 @@ const MovimientoInventario = sequelize.define('MovimientoInventario', {
     primaryKey: true,
     autoIncrement: true
   },
-  producto_id: { // Qué producto se movió
+  producto_id: {
     type: DataTypes.INTEGER,
-    allowNull: false
+    allowNull: true
   },
-  usuario_id: { // Quién hizo el movimiento
+  nombre_producto: { type: DataTypes.STRING(255), allowNull: true },
+  codigo_barras: { type: DataTypes.STRING(100), allowNull: true },
+  usuario_id: { 
     type: DataTypes.INTEGER,
     allowNull: false
   },
   tipo_movimiento: { 
-    type: DataTypes.STRING(20), // 'ENTRADA' (Compra) o 'AJUSTE' (Corrección/Merma)
+    type: DataTypes.STRING(20), 
     allowNull: false
   },
-  cantidad: { // Cuántos entraron o salieron
+  cantidad: { 
     type: DataTypes.INTEGER,
     allowNull: false
   },
-  stock_anterior: { // Dato útil para auditoría: cuánto había antes
+  stock_anterior: { 
     type: DataTypes.INTEGER,
     allowNull: true
   },
-  stock_nuevo: { // Cuánto quedó después
+  stock_nuevo: { 
     type: DataTypes.INTEGER,
     allowNull: true
   },
-  observaciones: { // "Factura 504", "Se rompió", "Conteo mensual"
+  motivo: {
+    type: DataTypes.STRING(50),
+    allowNull: true
+  },
+  observaciones: {
     type: DataTypes.STRING(255)
+  },
+  sucursal_id: {
+    type: DataTypes.INTEGER,
+    allowNull: true
   },
   fecha: {
     type: DataTypes.DATE,
@@ -42,5 +54,8 @@ const MovimientoInventario = sequelize.define('MovimientoInventario', {
   tableName: 'movimientos_inventario',
   timestamps: false
 });
+
+MovimientoInventario.belongsTo(Producto,  { foreignKey: 'producto_id', onDelete: 'SET NULL' });
+MovimientoInventario.belongsTo(Usuario,   { foreignKey: 'usuario_id' });
 
 export default MovimientoInventario;

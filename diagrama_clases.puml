@@ -1,0 +1,381 @@
+@startuml diagrama_clases_api
+
+title Sistema POS e Inventario — Diagrama de Clases API
+
+skinparam classAttributeIconSize 0
+skinparam class {
+    BackgroundColor<<Entity>>     #DDEEFF
+    BorderColor<<Entity>>         #336699
+    BackgroundColor<<DTO>>        #FFFDE7
+    BorderColor<<DTO>>            #F9A825
+    BackgroundColor<<Controller>> #E8F5E9
+    BorderColor<<Controller>>     #2E7D32
+    BackgroundColor<<Repository>> #F3E5F5
+    BorderColor<<Repository>>     #6A1B9A
+}
+
+' ─────────────────────────────────────────
+'  PACKAGE: ENTIDADES
+' ─────────────────────────────────────────
+package "Entidades" {
+
+    class Usuario <<Entity>> {
+        + usuario_id   : INTEGER  <<PK>>
+        + nombre       : VARCHAR(255)
+        + usuario      : VARCHAR(255)  <<UNIQUE>>
+        + contrasena   : VARCHAR(255)  ' hash bcrypt
+        + rol_id       : INTEGER       ' 1=ADMIN, 2=otro
+    }
+
+    class Producto <<Entity>> {
+        + producto_id    : INTEGER   <<PK>>
+        + codigo_barras  : VARCHAR(255) <<UNIQUE>>
+        + nombre         : VARCHAR(255)
+        + descripcion    : VARCHAR(255)
+        + categoria      : VARCHAR(255)
+        + precio_menudeo : DECIMAL(10,2)
+        + precio_mayoreo : DECIMAL(10,2)
+        + precio_oferta  : DECIMAL(10,2)
+        + stock_actual   : INTEGER
+        + stock_minimo   : INTEGER
+        + activo         : BOOLEAN
+    }
+
+    class Venta <<Entity>> {
+        + venta_id      : INTEGER    <<PK>>
+        + folio         : VARCHAR(20) <<UNIQUE>>  ' generado por frontend
+        + usuario_id    : INTEGER    <<FK>>
+        + fecha         : TIMESTAMPTZ
+        + total         : DECIMAL(10,2)
+        + tipo_venta    : VARCHAR(20) ' "Tienda" | "Pedido"
+        + pedido_numero : VARCHAR(50) ' nullable
+    }
+
+    class DetalleVenta <<Entity>> {
+        + detalle_id      : INTEGER    <<PK>>
+        + venta_id        : INTEGER    <<FK>>
+        + producto_id     : INTEGER    <<FK, nullable>>
+        + nombre_producto : VARCHAR(255) ' snapshot
+        + codigo_barras   : VARCHAR(100) ' snapshot
+        + cantidad        : INTEGER
+        + precio_unitario : DECIMAL(10,2)
+        + subtotal        : DECIMAL(10,2)
+    }
+
+    class Caja <<Entity>> {
+        + caja_id             : INTEGER    <<PK>>
+        + usuario_apertura_id : INTEGER    <<FK>>
+        + usuario_cierre_id   : INTEGER    <<FK, nullable>>
+        + monto_inicial       : DECIMAL(12,2)
+        + monto_final         : DECIMAL(12,2) ' nullable
+        + fecha_apertura      : TIMESTAMPTZ
+        + fecha_cierre        : TIMESTAMPTZ  ' NULL = caja abierta
+    }
+
+    class MovimientoCaja <<Entity>> {
+        + movimiento_caja_id : INTEGER    <<PK>>
+        + caja_id            : INTEGER    <<FK>>
+        + usuario_id         : INTEGER    <<FK>>
+        + tipo_movimiento    : VARCHAR(50) ' INGRESO|EGRESO|SOBRANTE|FALTANTE
+        + monto              : DECIMAL(10,2)
+        + concepto           : VARCHAR(255) ' nullable
+        + fecha              : TIMESTAMPTZ
+    }
+
+    class MovimientoInventario <<Entity>> {
+        + movimiento_id   : INTEGER     <<PK>>
+        + producto_id     : INTEGER     <<FK, nullable>>
+        + nombre_producto : VARCHAR(255) ' snapshot
+        + codigo_barras   : VARCHAR(100) ' snapshot
+        + usuario_id      : INTEGER     <<FK>>
+        + tipo_movimiento : VARCHAR(20)  ' ENTRADA|SALIDA|PERDIDA
+        + cantidad        : INTEGER
+        + stock_anterior  : INTEGER
+        + stock_nuevo     : INTEGER
+        + motivo          : VARCHAR(50)  ' nullable
+        + observaciones   : VARCHAR(255)
+        + fecha           : TIMESTAMPTZ
+    }
+
+}
+
+' ─────────────────────────────────────────
+'  RELACIONES ENTRE ENTIDADES
+' ─────────────────────────────────────────
+Usuario           "1" <--  "N"   Venta                : usuario_id
+Venta             "1" <--  "N"   DetalleVenta          : venta_id
+Producto          "1" <--o "N"   DetalleVenta          : producto_id (SET NULL)
+Usuario           "1" <--  "N"   Caja                  : usuario_apertura_id
+Usuario           "1" <--o "N"   Caja                  : usuario_cierre_id
+Caja              "1" <--  "N"   MovimientoCaja        : caja_id
+Usuario           "1" <--  "N"   MovimientoCaja        : usuario_id
+Producto          "1" <--o "N"   MovimientoInventario  : producto_id (SET NULL)
+Usuario           "1" <--  "N"   MovimientoInventario  : usuario_id
+
+
+' ─────────────────────────────────────────
+'  PACKAGE: DTOs — REQUEST
+' ─────────────────────────────────────────
+package "DTOs — Request" {
+
+    class LoginRequest <<DTO>> {
+        + usuario   : string
+        + contrasena: string
+    }
+
+    class VentaRequest <<DTO>> {
+        + folio         : string
+        + usuario_id    : number
+        + total         : number
+        + tipo_venta    : "Tienda" | "Pedido"
+        + pedido_numero : string?
+        + detalles      : DetalleVentaItem[]
+    }
+
+    class DetalleVentaItem <<DTO>> {
+        + producto_id    : number
+        + cantidad       : number
+        + precio_unitario: number
+        + subtotal       : number
+    }
+
+    class MovimientoInventarioRequest <<DTO>> {
+        + producto_id    : number
+        + usuario_id     : number
+        + tipo_movimiento: "ENTRADA" | "SALIDA" | "PERDIDA"
+        + motivo         : string?
+        + cantidad       : number
+        + observaciones  : string?
+    }
+
+    class AbrirCajaRequest <<DTO>> {
+        + usuario_id: number
+        + monto     : number
+    }
+
+    class CerrarCajaRequest <<DTO>> {
+        + caja_id          : number
+        + usuario_cierre_id: number
+        + montoFinal       : number
+        + diferencia       : number
+        + motivo           : string?
+    }
+
+    class MovimientoCajaRequest <<DTO>> {
+        + caja_id        : number
+        + usuario_id     : number
+        + tipo_movimiento: "INGRESO" | "EGRESO"
+        + monto          : number
+        + concepto       : string?
+    }
+
+    class ReporteRequest <<DTO>> {
+        + fechaInicio: string  ' formato YYYY-MM-DD
+        + fechaFin   : string
+    }
+
+    VentaRequest "1" *-- "N" DetalleVentaItem
+
+}
+
+' ─────────────────────────────────────────
+'  PACKAGE: DTOs — RESPONSE
+' ─────────────────────────────────────────
+package "DTOs — Response" {
+
+    class LoginResponse <<DTO>> {
+        + token     : string  ' JWT 8h
+        + usuario_id: number
+        + usuario   : string
+        + nombre    : string
+        + rol_id    : number
+    }
+
+    class TicketVentaResponse <<DTO>> {
+        + venta_id     : number
+        + folio        : string
+        + fecha        : Date
+        + total        : number
+        + tipo_venta   : string
+        + pedido_numero: string?
+        + nombre_cajero: string
+        + detalles     : DetalleTicketItem[]
+    }
+
+    class DetalleTicketItem <<DTO>> {
+        + producto_id    : number?
+        + nombre         : string
+        + codigo_barras  : string
+        + cantidad       : number
+        + precio_unitario: number
+        + subtotal       : number
+    }
+
+    class TotalesCajaResponse <<DTO>> {
+        + caja_id      : number
+        + montoInicial : number
+        + totalVentas  : number  ' informativo
+        + totalIngresos: number
+        + totalEgresos : number
+        + montoEsperado: number  ' = montoInicial + ingresos - egresos
+        + fecha_apertura: Date
+    }
+
+    class CodigoBarrasResponse <<DTO>> {
+        + codigo: string
+        + tipo  : string  ' ej: "EAN-13"
+    }
+
+    TicketVentaResponse "1" *-- "N" DetalleTicketItem
+
+}
+
+' ─────────────────────────────────────────
+'  PACKAGE: REPOSITORIOS (Sequelize Models)
+' ─────────────────────────────────────────
+package "Repositorios (Sequelize)" {
+
+    class UsuarioRepository <<Repository>> {
+        + findOne(where)    : Usuario
+        + findAll(options)  : Usuario[]
+        + create(data)      : Usuario
+        + update(data, where): number[]
+        + destroy(where)    : number
+    }
+
+    class ProductoRepository <<Repository>> {
+        + findAll(options)   : Producto[]
+        + findByPk(id)       : Producto
+        + create(data)       : Producto
+        + update(data, where): number[]
+        + destroy(where)     : number
+        + decrement(field, options): void
+    }
+
+    class VentaRepository <<Repository>> {
+        + create(data, t)   : Venta
+        + findAll(options)  : Venta[]
+    }
+
+    class DetalleVentaRepository <<Repository>> {
+        + create(data, t)  : DetalleVenta
+        + findAll(options) : DetalleVenta[]
+    }
+
+    class CajaRepository <<Repository>> {
+        + findOne(where)    : Caja
+        + findByPk(id)      : Caja
+        + create(data)      : Caja
+        + update(data, where): number[]
+        + sum(field, where) : number
+    }
+
+    class MovimientoCajaRepository <<Repository>> {
+        + create(data, t): MovimientoCaja
+        + sum(field, where): number
+    }
+
+    class MovimientoInventarioRepository <<Repository>> {
+        + create(data, t)  : MovimientoInventario
+        + findAll(options) : MovimientoInventario[]
+    }
+
+    UsuarioRepository            ..> Usuario
+    ProductoRepository           ..> Producto
+    VentaRepository              ..> Venta
+    DetalleVentaRepository       ..> DetalleVenta
+    CajaRepository               ..> Caja
+    MovimientoCajaRepository     ..> MovimientoCaja
+    MovimientoInventarioRepository ..> MovimientoInventario
+
+}
+
+' ─────────────────────────────────────────
+'  PACKAGE: CONTROLADORES
+' ─────────────────────────────────────────
+package "Controladores" {
+
+    class AuthController <<Controller>> {
+        + login(req, res): LoginResponse
+        + registrarUsuario(req, res): void
+    }
+
+    class ProductosController <<Controller>> {
+        + getAll(req, res)       : Producto[]
+        + createProducto(req, res): Producto
+        + updateProducto(req, res): Producto
+        + deleteProducto(req, res): void
+    }
+
+    class UsuariosController <<Controller>> {
+        + getUsuarios(req, res)  : Usuario[]  ' sin campo contrasena
+        + createUsuario(req, res): Usuario
+        + updateUsuario(req, res): void
+        + deleteUsuario(req, res): void
+    }
+
+    class VentasController <<Controller>> {
+        + crearVenta(req, res)   : VentaResponse
+        + getVentaPorId(req, res): TicketVentaResponse
+    }
+
+    class CajaController <<Controller>> {
+        + estadoCaja(req, res)         : EstadoCaja
+        + abrirCaja(req, res)          : Caja
+        + obtenerTotalesCaja(req, res) : TotalesCajaResponse
+        + registrarMovimiento(req, res): MovimientoCaja
+        + cerrarCaja(req, res)         : void
+    }
+
+    class InventarioController <<Controller>> {
+        + registrarMovimiento(req, res): void
+        + getHistorial(req, res)       : HistorialItem[]
+    }
+
+    class ReportesController <<Controller>> {
+        + getReporteVentas(req, res)   : ReporteVentasResponse
+        + getReporteProductos(req, res): ReporteProductosResponse
+        + getReporteCaja(req, res)     : ReporteCajaResponse
+        + getReporteInventario(req, res): MovimientoInventario[]
+        + getDatosGraficas(req, res)   : GraficasResponse
+    }
+
+    class EscanerController <<Controller>> {
+        + leerCodigoDeImagen(req, res): CodigoBarrasResponse
+    }
+
+}
+
+' ─────────────────────────────────────────
+'  DEPENDENCIAS: Controladores → Repositorios
+' ─────────────────────────────────────────
+AuthController        ..> UsuarioRepository
+ProductosController   ..> ProductoRepository
+UsuariosController    ..> UsuarioRepository
+VentasController      ..> VentaRepository
+VentasController      ..> DetalleVentaRepository
+VentasController      ..> ProductoRepository
+VentasController      ..> CajaRepository
+VentasController      ..> MovimientoCajaRepository
+CajaController        ..> CajaRepository
+CajaController        ..> MovimientoCajaRepository
+CajaController        ..> VentaRepository
+InventarioController  ..> MovimientoInventarioRepository
+InventarioController  ..> ProductoRepository
+
+' ─────────────────────────────────────────
+'  DEPENDENCIAS: Controladores → DTOs
+' ─────────────────────────────────────────
+AuthController        ..> LoginRequest
+AuthController        ..> LoginResponse
+VentasController      ..> VentaRequest
+VentasController      ..> TicketVentaResponse
+CajaController        ..> AbrirCajaRequest
+CajaController        ..> CerrarCajaRequest
+CajaController        ..> MovimientoCajaRequest
+CajaController        ..> TotalesCajaResponse
+InventarioController  ..> MovimientoInventarioRequest
+ReportesController    ..> ReporteRequest
+EscanerController     ..> CodigoBarrasResponse
+
+@enduml

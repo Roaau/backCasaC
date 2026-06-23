@@ -1,23 +1,24 @@
 import { Router } from "express";
-import { 
-    getAll, 
-    createProducto, 
-    updateProducto, 
-    deleteProducto 
+import {
+    getAll,
+    buscarProducto,
+    createProducto,
+    updateProducto,
+    deleteProducto,
+    importarProductos,
+    stockBajoCount,
 } from "../controllers/productosController.js";
+import { validarCrearProducto, validarEditarProducto } from "../validators/productos.js";
+import { validate } from "../middleware/validate.js";
 
 const router = Router();
 
-// Ruta para obtener todos
-router.get("/", getAll);
-
-// Ruta para crear uno nuevo
-router.post("/", createProducto);
-
-// Ruta para editar (necesita el ID)
-router.put("/:id", updateProducto);
-
-// Ruta para eliminar
+router.get("/buscar/:texto",  buscarProducto);
+router.get("/stock-bajo-count", stockBajoCount);
+router.get("/",              getAll);
+router.post("/", validarCrearProducto, validate, createProducto);
+router.put("/:id", validarEditarProducto, validate, updateProducto);
 router.delete("/:id", deleteProducto);
+router.post("/importar", importarProductos);
 
 export default router;

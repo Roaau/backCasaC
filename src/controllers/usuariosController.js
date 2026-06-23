@@ -1,84 +1,74 @@
 import Usuario from "../models/Usuario.js";
 import bcrypt from "bcrypt";
 
-// GET: Obtener todos
+const CAMPOS_PUBLICOS = ['usuario_id', 'nombre', 'usuario', 'rol_id', 'sucursal_id', 'empresa_id', 'activo'];
+
 export const getUsuarios = async (req, res) => {
   try {
-    const usuarios = await Usuario.findAll();
-    // (Opcional) Podrías mapear aquí para devolver el nombre del rol en vez del ID,
-    // pero lo haremos en el frontend para no complicar la consulta.
+    const empresa_id = req.usuario.empresa_id || 1;
+    const usuarios = await Usuario.findAll({
+      attributes: CAMPOS_PUBLICOS,
+      where: { empresa_id }
+    });
     res.json(usuarios);
-  } catch (error) {
-    console.error(error);
+  } catch {
     res.status(500).json({ error: "Error al obtener usuarios" });
   }
 };
 
-// POST: Crear usuario (CON ENCRIPTACIÓN)
 export const createUsuario = async (req, res) => {
+  const { nombre, usuario, contrasena, rol, sucursal_id } = req.body;
+  if (!nombre || !usuario || !contrasena) {
+    return res.status(400).json({ error: "Nombre, usuario y contraseña son requeridos" });
+  }
   try {
-    const { nombre, usuario, contrasena, rol } = req.body;
-
-    // 1. Encriptar contraseña
-    const hashedPassword = await bcrypt.hash(contrasena, 10);
-
-    // 2. Convertir Texto a ID de Rol
-    // Si viene "ADMINISTRADOR" guardamos 1, si no, 2
-    const rol_id = (rol === 'ADMINISTRADOR') ? 1 : 2;
-
+    const hash = await bcrypt.hash(contrasena, 10);
     const nuevo = await Usuario.create({
       nombre,
       usuario,
-      contrasena: hashedPassword,
-      rol_id
+      contrasena: hash,
+      rol_id:      rol === 'ADMINISTRADOR' ? 1 : 2,
+      sucursal_id: sucursal_id || req.usuario.sucursal_id || 1,
+      empresa_id:  req.usuario.empresa_id  || 1,
+      activo:      true
     });
-
-    res.json(nuevo);
-  } catch (error) {
-    console.error(error);
+    res.json({ usuario_id: nuevo.usuario_id, nombre: nuevo.nombre, usuario: nuevo.usuario, rol_id: nuevo.rol_id });
+  } catch {
     res.status(500).json({ error: "Error al crear usuario. Posible usuario duplicado." });
   }
 };
 
-// PUT: Editar usuario
 export const updateUsuario = async (req, res) => {
+  const { id } = req.params;
+  const empresa_id = req.usuario.empresa_id;
+  const { nombre, usuario, contrasena, rol, sucursal_id, activo } = req.body;
   try {
-    const { id } = req.params;
-    const { nombre, usuario, contrasena, rol } = req.body;
-
-    let datosActualizar = { 
-        nombre, 
-        usuario,
-        rol_id: (rol === 'ADMINISTRADOR') ? 1 : 2
+    const datos = {
+      ...(nombre       !== undefined && { nombre }),
+      ...(usuario      !== undefined && { usuario }),
+      ...(rol          !== undefined && { rol_id: rol === 'ADMINISTRADOR' ? 1 : 2 }),
+      ...(sucursal_id  !== undefined && { sucursal_id }),
+      ...(activo       !== undefined && { activo })
     };
-
-    // Solo si enviaron una contraseña nueva, la encriptamos y la agregamos
-    if (contrasena && contrasena.trim() !== "") {
-        datosActualizar.contrasena = await bcrypt.hash(contrasena, 10);
+    if (contrasena?.trim()) {
+      datos.contrasena = await bcrypt.hash(contrasena, 10);
     }
-
-    const [updated] = await Usuario.update(datosActualizar, { where: { usuario_id: id } });
-
-    if(updated) {
-        res.json({ msg: "Usuario actualizado" });
-    } else {
-        res.status(404).json({ msg: "Usuario no encontrado" });
-    }
-    
-  } catch (error) {
-    console.error(error);
+    const [updated] = await Usuario.update(datos, { where: { usuario_id: id, empresa_id } });
+    if (!updated) return res.status(404).json({ error: "Usuario no encontrado" });
+    res.json({ msg: "Usuario actualizado" });
+  } catch {
     res.status(500).json({ error: "Error al actualizar" });
   }
 };
 
-// DELETE: Eliminar físico (Destroy)
-// Si prefieres borrado lógico, tendrías que agregar una columna 'activo' a tu modelo Usuario.js
 export const deleteUsuario = async (req, res) => {
+  const { id } = req.params;
+  const empresa_id = req.usuario.empresa_id;
   try {
-    const { id } = req.params;
-    await Usuario.destroy({ where: { usuario_id: id } });
+    const eliminado = await Usuario.destroy({ where: { usuario_id: id, empresa_id } });
+    if (!eliminado) return res.status(404).json({ error: "Usuario no encontrado" });
     res.json({ msg: "Usuario eliminado" });
-  } catch (error) {
+  } catch {
     res.status(500).json({ error: "Error al eliminar" });
   }
 };

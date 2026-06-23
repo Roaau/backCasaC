@@ -1,4 +1,3 @@
-// src/models/MovimientoCaja.js
 import { DataTypes } from 'sequelize';
 import sequelize from '../config/database.js';
 
@@ -18,7 +17,7 @@ const MovimientoCaja = sequelize.define('MovimientoCaja', {
   },
   tipo_movimiento: {
     type: DataTypes.STRING(50),
-    allowNull: false // 'INGRESO' | 'EGRESO'
+    allowNull: false 
   },
   monto: {
     type: DataTypes.DECIMAL(10,2),
@@ -34,7 +33,7 @@ const MovimientoCaja = sequelize.define('MovimientoCaja', {
     defaultValue: DataTypes.NOW
   }
 }, {
-  tableName: 'movimiento_caja', // coincide con tu BD
+  tableName: 'movimiento_caja', 
   timestamps: false
 });
 
