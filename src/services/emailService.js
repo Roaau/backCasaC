@@ -1,4 +1,6 @@
 import nodemailer from "nodemailer";
+import dns from "dns";
+dns.setDefaultResultOrder("ipv4first");
 
 export const enviarCodigoRegistro = async ({ destinatario, codigo }) => {
   const transporter = nodemailer.createTransport({
