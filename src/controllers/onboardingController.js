@@ -6,7 +6,7 @@ export const getStatus = async (req, res) => {
         const { empresa_id } = req.usuario;
 
         const [empresa] = await sequelize.query(
-            `SELECT logo FROM empresas WHERE empresa_id = :empresa_id`,
+            `SELECT logo_empresa FROM empresas WHERE empresa_id = :empresa_id`,
             { replacements: { empresa_id }, type: QueryTypes.SELECT }
         );
 
@@ -29,7 +29,7 @@ export const getStatus = async (req, res) => {
 
         const pasos = [
             { id: 1, label: 'Empresa creada',                    completado: true },
-            { id: 2, label: 'Logo del negocio configurado',       completado: !!empresa?.logo },
+            { id: 2, label: 'Logo del negocio configurado',       completado: !!empresa?.logo_empresa },
             { id: 3, label: 'Productos en inventario',            completado: parseInt(total_productos) > 0 },
             { id: 4, label: 'Usuario adicional creado',           completado: parseInt(total_usuarios) > 1 },
             { id: 5, label: 'Primera venta realizada',            completado: parseInt(total_ventas) > 0 }
