@@ -1,4 +1,5 @@
-import "dotenv/config";
+import dotenv from "dotenv";
+dotenv.config({ override: true });
 import * as Sentry from "@sentry/node";
 
 if (process.env.SENTRY_DSN) {
