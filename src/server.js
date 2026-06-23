@@ -104,8 +104,17 @@ const allowedOrigins = process.env.FRONTEND_URL
 
 app.use(helmet());
 app.use(cors({
-  origin: allowedOrigins ?? "*",
+  origin: (origin, callback) => {
+    if (!origin) return callback(null, true);
+    if (!allowedOrigins) return callback(null, true);
+    const allowed =
+      allowedOrigins.includes(origin) ||
+      /^https:\/\/[a-z0-9-]+\.vercel\.app$/.test(origin) ||
+      origin === 'http://localhost:4200';
+    callback(allowed ? null : new Error('CORS'), allowed);
+  },
   methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+  credentials: true,
 }));
 app.use((req, res, next) => {
   if (req.headers["access-control-request-private-network"]) {
