@@ -69,15 +69,16 @@ export const obtenerTotalesCaja = async (req, res) => {
     );
     const totalVentas = parseFloat(ventasRaw[0].total) || 0;
 
-    const ingresosMov     = await MovimientoCaja.sum('monto', { where: { caja_id: cajaId, tipo_movimiento: 'INGRESO'     } }) || 0;
-    const egresosMov      = await MovimientoCaja.sum('monto', { where: { caja_id: cajaId, tipo_movimiento: 'EGRESO'      } }) || 0;
-    const devolucionesMov = await MovimientoCaja.sum('monto', { where: { caja_id: cajaId, tipo_movimiento: 'DEVOLUCION'  } }) || 0;
+    const ingresosMov     = await MovimientoCaja.sum('monto', { where: { caja_id: cajaId, tipo_movimiento: 'INGRESO'    } }) || 0;
+    const egresosMov      = await MovimientoCaja.sum('monto', { where: { caja_id: cajaId, tipo_movimiento: 'EGRESO'     } }) || 0;
+    const devolucionesMov = await MovimientoCaja.sum('monto', { where: { caja_id: cajaId, tipo_movimiento: 'DEVOLUCION' } }) || 0;
+    const totalSalidas    = egresosMov + devolucionesMov;
 
     return res.json({
       caja_id: caja.caja_id, montoInicial, totalVentas,
-      totalIngresos: ingresosMov, totalEgresos: egresosMov,
-      totalDevoluciones: devolucionesMov,
-      montoEsperado: montoInicial + totalVentas + ingresosMov - egresosMov - devolucionesMov,
+      totalIngresos: ingresosMov,
+      totalEgresos: totalSalidas,
+      montoEsperado: montoInicial + totalVentas + ingresosMov - totalSalidas,
       fecha_apertura: caja.fecha_apertura
     });
   } catch (err) {
