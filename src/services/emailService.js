@@ -3,8 +3,8 @@ import nodemailer from "nodemailer";
 export const enviarCodigoRegistro = async ({ destinatario, codigo }) => {
   const transporter = nodemailer.createTransport({
     host:   process.env.EMAIL_HOST || 'smtp.gmail.com',
-    port:   Number(process.env.EMAIL_PORT) || 587,
-    secure: false,
+    port:   Number(process.env.EMAIL_PORT) || 465,
+    secure: true,
     auth:   { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS },
   });
   const from = process.env.EMAIL_FROM || `SC POS <${process.env.EMAIL_USER}>`;
@@ -67,8 +67,8 @@ export const enviarCodigoRegistro = async ({ destinatario, codigo }) => {
 export const enviarCodigoReset = async ({ destinatario, codigo, nombreUsuario }) => {
   const transporter = nodemailer.createTransport({
     host:   process.env.EMAIL_HOST || 'smtp.gmail.com',
-    port:   Number(process.env.EMAIL_PORT) || 587,
-    secure: false,
+    port:   Number(process.env.EMAIL_PORT) || 465,
+    secure: true,
     auth:   { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS },
   });
   const from = process.env.EMAIL_FROM || `SC POS <${process.env.EMAIL_USER}>`;
@@ -244,8 +244,8 @@ export const enviarFacturaPorCorreo = async ({
 }) => {
   const smtpOpts = transporterConfig ?? {
     host:   process.env.EMAIL_HOST,
-    port:   Number(process.env.EMAIL_PORT) || 587,
-    secure: false,
+    port:   Number(process.env.EMAIL_PORT) || 465,
+    secure: true,
     auth:   { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS },
   };
   const from    = transporterConfig?.from    ?? process.env.EMAIL_FROM;
