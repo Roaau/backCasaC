@@ -82,8 +82,15 @@ export const crearVenta = async (req, res) => {
 
       if (guardar_cliente === true) {
         const [cliente] = await ClienteFiscal.findOrCreate({
-          where: { rfc: receptor_rfc.toUpperCase() },
-          defaults: { rfc: receptor_rfc.toUpperCase(), nombre_fiscal: receptor_nombre, cp_fiscal: receptor_cp, regimen_fiscal: receptor_regimen, uso_cfdi_default: uso_cfdi },
+          where: { empresa_id: req.usuario.empresa_id, rfc: receptor_rfc.toUpperCase() },
+          defaults: {
+            empresa_id: req.usuario.empresa_id,
+            rfc: receptor_rfc.toUpperCase(),
+            nombre_fiscal: receptor_nombre,
+            cp_fiscal: receptor_cp,
+            regimen_fiscal: receptor_regimen,
+            uso_cfdi_default: uso_cfdi
+          },
           transaction: t
         });
         clienteId = cliente.cliente_id;

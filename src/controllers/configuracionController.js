@@ -1,8 +1,9 @@
 import ConfiguracionFiscal from "../models/ConfiguracionFiscal.js";
+import { obtenerEmpresaId, responderErrorScope } from "../utils/scope.js";
 
 export const getConfiguracion = async (req, res) => {
   try {
-    const empresa_id = req.usuario.empresa_id;
+    const empresa_id = obtenerEmpresaId(req.usuario);
     const [config] = await ConfiguracionFiscal.findOrCreate({
       where: { empresa_id },
       defaults: { empresa_id }
@@ -30,13 +31,13 @@ export const getConfiguracion = async (req, res) => {
     });
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: err.message });
+    responderErrorScope(res, err);
   }
 };
 
 export const guardarConfiguracion = async (req, res) => {
   try {
-    const empresa_id = req.usuario.empresa_id;
+    const empresa_id = obtenerEmpresaId(req.usuario);
     const [config] = await ConfiguracionFiscal.findOrCreate({
       where: { empresa_id },
       defaults: { empresa_id }
@@ -63,6 +64,6 @@ export const guardarConfiguracion = async (req, res) => {
     res.json({ mensaje: "Configuración guardada correctamente" });
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: err.message });
+    responderErrorScope(res, err);
   }
 };
