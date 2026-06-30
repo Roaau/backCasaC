@@ -44,7 +44,7 @@ const MovimientoInventario = sequelize.define('MovimientoInventario', {
   },
   sucursal_id: {
     type: DataTypes.INTEGER,
-    allowNull: true
+    allowNull: false
   },
   fecha: {
     type: DataTypes.DATE,

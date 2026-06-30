@@ -3,6 +3,7 @@ import CatalogoMaestro from '../models/CatalogoMaestro.js';
 import Producto from '../models/Producto.js';
 import StockSucursal from '../models/StockSucursalModel.js';
 import Sucursal from '../models/SucursalModel.js';
+import { obtenerEmpresaId, responderErrorScope } from '../utils/scope.js';
 
 // GET /api/catalogo/buscar?q= — autocomplete para crear productos
 export const buscarCatalogo = async (req, res) => {
@@ -23,7 +24,7 @@ export const buscarCatalogo = async (req, res) => {
 // GET /api/catalogo?q=&page=1&limit=50&categoria=
 export const listarCatalogo = async (req, res) => {
   const { q = '', page = 1, limit = 50, categoria } = req.query;
-  const empresa_id = req.usuario.empresa_id || 1;
+  const empresa_id = obtenerEmpresaId(req.usuario);
   const offset = (Number(page) - 1) * Number(limit);
 
   const where = {};
@@ -80,8 +81,7 @@ export const adoptarProductos = async (req, res) => {
   if (!Array.isArray(ids) || ids.length === 0)
     return res.status(400).json({ error: 'Se requiere al menos un producto' });
 
-  const empresa_id  = req.usuario.empresa_id  || 1;
-  const sucursal_id = req.usuario.sucursal_id || 1;
+  const empresa_id  = obtenerEmpresaId(req.usuario);
 
   try {
     const [items, sucursales, existentes] = await Promise.all([
@@ -105,13 +105,13 @@ export const adoptarProductos = async (req, res) => {
 
     res.json({ mensaje: `Adoptados: ${creados.length}`, adoptados: creados.length, omitidos });
   } catch (err) {
-    res.status(500).json({ error: 'Error al adoptar productos', detalle: err.message });
+    responderErrorScope(res, err);
   }
 };
 
 // POST /api/catalogo/adoptar-todo
 export const adoptarTodo = async (req, res) => {
-  const empresa_id = req.usuario.empresa_id || 1;
+  const empresa_id = obtenerEmpresaId(req.usuario);
 
   try {
     const [items, sucursales, existentes] = await Promise.all([

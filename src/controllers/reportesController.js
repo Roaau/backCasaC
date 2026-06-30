@@ -6,7 +6,7 @@ import ExcelJS from 'exceljs';
 export const getReporteVentas = async (req, res) => {
     try {
         const { fechaInicio, fechaFin } = req.body;
-        const { clausula, params } = filtroEmpresa(req.usuario, 'v.sucursal_id', 's');
+        const { clausula, params } = filtroEmpresa(req.usuario, 'v.sucursal_id', 's', req.body);
 
         const query = `
             SELECT
@@ -48,7 +48,7 @@ export const getReporteVentas = async (req, res) => {
 export const getReporteProductos = async (req, res) => {
     try {
         const { fechaInicio, fechaFin } = req.body;
-        const { clausula, params } = filtroEmpresa(req.usuario, 'v.sucursal_id', 's');
+        const { clausula, params } = filtroEmpresa(req.usuario, 'v.sucursal_id', 's', req.body);
 
         const query = `
             SELECT
@@ -86,8 +86,8 @@ export const getReporteProductos = async (req, res) => {
 export const getReporteCaja = async (req, res) => {
     try {
         const { fechaInicio, fechaFin } = req.body;
-        const { clausula: filtroCortes, params: paramsCortes }     = filtroEmpresa(req.usuario, 'c.sucursal_id', 's');
-        const { clausula: filtroMovimientos, params: paramsMov }   = filtroEmpresa(req.usuario, 'c.sucursal_id', 's');
+        const { clausula: filtroCortes, params: paramsCortes }     = filtroEmpresa(req.usuario, 'c.sucursal_id', 's', req.body);
+        const { clausula: filtroMovimientos, params: paramsMov }   = filtroEmpresa(req.usuario, 'c.sucursal_id', 's', req.body);
 
         const replacements = {
             inicio: `${fechaInicio} 00:00:00`,
@@ -103,7 +103,7 @@ export const getReporteCaja = async (req, res) => {
                 c.monto_final,
                 (c.monto_final - (
                     c.monto_inicial +
-                    (SELECT COALESCE(SUM(total),0) FROM "ventas" WHERE fecha BETWEEN c.fecha_apertura AND c.fecha_cierre) -
+                    (SELECT COALESCE(SUM(total),0) FROM "ventas" WHERE fecha BETWEEN c.fecha_apertura AND c.fecha_cierre AND sucursal_id = c.sucursal_id) -
                     (SELECT COALESCE(SUM(monto),0) FROM "movimiento_caja" WHERE caja_id = c.caja_id AND tipo_movimiento = 'EGRESO')
                 )) as diferencia_calculada,
                 u1.nombre as abrio,
@@ -148,7 +148,7 @@ export const getReporteCaja = async (req, res) => {
 export const getReporteInventario = async (req, res) => {
     try {
         const { fechaInicio, fechaFin } = req.body;
-        const { clausula, params } = filtroEmpresa(req.usuario, 'm.sucursal_id', 's');
+        const { clausula, params } = filtroEmpresa(req.usuario, 'm.sucursal_id', 's', req.body);
 
         const query = `
             SELECT
@@ -187,7 +187,7 @@ export const getReporteInventario = async (req, res) => {
 export const getDatosGraficas = async (req, res) => {
     try {
         const { fechaInicio, fechaFin } = req.body;
-        const { clausula, params } = filtroEmpresa(req.usuario, 'v.sucursal_id', 's');
+        const { clausula, params } = filtroEmpresa(req.usuario, 'v.sucursal_id', 's', req.body);
 
         const replacements = {
             inicio: `${fechaInicio} 00:00:00`,
@@ -244,7 +244,7 @@ export const exportarExcel = async (req, res) => {
         let hojaNombre = 'Reporte';
 
         if (tipo === 'ventas') {
-            const { clausula, params } = filtroEmpresa(req.usuario, 'v.sucursal_id', 's');
+            const { clausula, params } = filtroEmpresa(req.usuario, 'v.sucursal_id', 's', req.body);
             filas = await sequelize.query(`
                 SELECT v.folio, TO_CHAR(v.fecha, 'DD/MM/YYYY HH24:MI') as fecha,
                     v.total, v.tipo_venta, u.nombre as cajero, s.nombre as sucursal
@@ -265,7 +265,7 @@ export const exportarExcel = async (req, res) => {
             hojaNombre = 'Ventas';
 
         } else if (tipo === 'productos') {
-            const { clausula, params } = filtroEmpresa(req.usuario, 'v.sucursal_id', 's');
+            const { clausula, params } = filtroEmpresa(req.usuario, 'v.sucursal_id', 's', req.body);
             filas = await sequelize.query(`
                 SELECT d.codigo_barras, d.nombre_producto,
                     SUM(d.cantidad) as cantidad_vendida, SUM(d.subtotal) as dinero_generado
@@ -285,7 +285,7 @@ export const exportarExcel = async (req, res) => {
             hojaNombre = 'Productos';
 
         } else if (tipo === 'caja') {
-            const { clausula, params } = filtroEmpresa(req.usuario, 'c.sucursal_id', 's');
+            const { clausula, params } = filtroEmpresa(req.usuario, 'c.sucursal_id', 's', req.body);
             filas = await sequelize.query(`
                 SELECT TO_CHAR(c.fecha_apertura,'DD/MM/YYYY HH24:MI') as apertura,
                     TO_CHAR(c.fecha_cierre,'DD/MM/YYYY HH24:MI') as cierre,
@@ -310,7 +310,7 @@ export const exportarExcel = async (req, res) => {
             hojaNombre = 'Caja';
 
         } else if (tipo === 'inventario') {
-            const { clausula, params } = filtroEmpresa(req.usuario, 'm.sucursal_id', 's');
+            const { clausula, params } = filtroEmpresa(req.usuario, 'm.sucursal_id', 's', req.body);
             filas = await sequelize.query(`
                 SELECT TO_CHAR(m.fecha,'DD/MM/YYYY HH24:MI') as fecha,
                     m.tipo_movimiento, m.cantidad, m.nombre_producto,

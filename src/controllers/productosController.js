@@ -4,14 +4,19 @@ import StockSucursal from "../models/StockSucursalModel.js";
 import Sucursal from "../models/SucursalModel.js";
 import multer from "multer";
 import XLSX from "xlsx";
+import {
+  resolverScopeSucursales,
+  resolverSucursalOperativa,
+  responderErrorScope
+} from "../utils/scope.js";
 
 export const uploadMiddleware = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } }).single('archivo');
 
 export const buscarProducto = async (req, res) => {
   try {
     const { texto } = req.params;
-    const empresa_id  = req.usuario.empresa_id  || 1;
-    const sucursal_id = req.query.sucursal_id   || req.usuario.sucursal_id || 1;
+    const empresa_id  = req.usuario.empresa_id;
+    const sucursal_id = await resolverSucursalOperativa(req);
 
     const productos = await Producto.findAll({
       where: {
@@ -38,14 +43,14 @@ export const buscarProducto = async (req, res) => {
 
     res.json(resultado);
   } catch (err) {
-    res.status(500).json({ error: "Error al buscar productos" });
+    responderErrorScope(res, err);
   }
 };
 
 export const getAll = async (req, res) => {
   try {
-    const empresa_id  = req.usuario.empresa_id  || 1;
-    const sucursal_id = req.query.sucursal_id   || req.usuario.sucursal_id || 1;
+    const empresa_id  = req.usuario.empresa_id;
+    const sucursal_id = await resolverSucursalOperativa(req);
     const page        = Math.max(1, parseInt(req.query.page)  || 1);
     const limit       = Math.min(200, parseInt(req.query.limit) || 50);
     const q           = req.query.q?.toString().trim()         || '';
@@ -83,40 +88,47 @@ export const getAll = async (req, res) => {
 
     res.json({ items, total: count, page, pages: Math.ceil(count / limit) || 1, limit });
   } catch (err) {
-    res.status(500).json({ error: "Error al obtener productos" });
+    responderErrorScope(res, err);
   }
 };
 
 export const stockBajoCount = async (req, res) => {
   try {
-    const empresa_id  = req.usuario.empresa_id  || 1;
-    const sucursal_id = req.usuario.sucursal_id || 1;
+    const scope = await resolverScopeSucursales(req);
     const rows = await Producto.findAll({
-      where: { empresa_id },
-      include: [{ model: StockSucursal, where: { sucursal_id }, required: false, attributes: ['stock_actual', 'stock_minimo'] }],
+      where: { empresa_id: scope.empresa_id },
+      include: [{ model: StockSucursal, where: { sucursal_id: scope.whereSucursal }, required: false, attributes: ['stock_actual', 'stock_minimo'] }],
       attributes: ['stock_actual', 'stock_minimo'],
     });
     const count = rows.filter(p => {
-      const actual  = p.StockSucursals?.[0]?.stock_actual ?? p.stock_actual ?? 0;
-      const minimo  = p.StockSucursals?.[0]?.stock_minimo ?? p.stock_minimo ?? 5;
-      return actual <= minimo;
+      const stocks = p.StockSucursals ?? [];
+      if (stocks.length === 0) {
+        const actual = p.stock_actual ?? 0;
+        const minimo = p.stock_minimo ?? 5;
+        return actual <= minimo;
+      }
+      return stocks.some(s => {
+        const actual = s.stock_actual ?? 0;
+        const minimo = s.stock_minimo ?? p.stock_minimo ?? 5;
+        return actual <= minimo;
+      });
     }).length;
     res.json({ count });
-  } catch {
-    res.status(500).json({ count: 0 });
+  } catch (err) {
+    responderErrorScope(res, err);
   }
 };
 
 export const createProducto = async (req, res) => {
   try {
-    const empresa_id = req.usuario.empresa_id || 1;
+    const empresa_id = req.usuario.empresa_id;
+    const sucursal_id = await resolverSucursalOperativa(req);
     const data = { ...req.body, empresa_id };
     if (!data.minimo_mayoreo || Number(data.minimo_mayoreo) === 0) data.minimo_mayoreo = null;
 
     const nuevoProducto = await Producto.create(data);
 
     // Crear registro de stock para todas las sucursales de esta empresa
-    const sucursal_id = req.usuario.sucursal_id || 1;
     await StockSucursal.create({
       producto_id:  nuevoProducto.producto_id,
       sucursal_id,
@@ -129,14 +141,15 @@ export const createProducto = async (req, res) => {
     if (err.name === 'SequelizeUniqueConstraintError') {
       return res.status(400).json({ error: "El código de barras ya existe." });
     }
-    res.status(500).json({ error: "Error al crear producto" });
+    responderErrorScope(res, err);
   }
 };
 
 export const updateProducto = async (req, res) => {
   try {
     const { id } = req.params;
-    const empresa_id = req.usuario.empresa_id || 1;
+    const empresa_id = req.usuario.empresa_id;
+    const sucursal_id = await resolverSucursalOperativa(req);
     const data = { ...req.body };
     if (data.minimo_mayoreo !== undefined && (!data.minimo_mayoreo || Number(data.minimo_mayoreo) === 0)) {
       data.minimo_mayoreo = null;
@@ -146,7 +159,6 @@ export const updateProducto = async (req, res) => {
     if (!updated) return res.status(404).json({ error: "Producto no encontrado" });
 
     // Si cambia stock_actual o stock_minimo, actualizar también StockSucursal de esta sucursal
-    const sucursal_id = req.usuario.sucursal_id || 1;
     const stockUpdate = {};
     if (data.stock_actual !== undefined) stockUpdate.stock_actual = data.stock_actual;
     if (data.stock_minimo !== undefined) stockUpdate.stock_minimo = data.stock_minimo;
@@ -157,7 +169,7 @@ export const updateProducto = async (req, res) => {
     const productoActualizado = await Producto.findByPk(id);
     return res.json({ msg: "Producto actualizado", producto: productoActualizado });
   } catch (err) {
-    res.status(500).json({ error: "Error al actualizar producto" });
+    responderErrorScope(res, err);
   }
 };
 
@@ -166,8 +178,8 @@ export const importarProductos = async (req, res) => {
     if (err) return res.status(400).json({ error: 'Error al recibir el archivo' });
     if (!req.file) return res.status(400).json({ error: 'No se envió ningún archivo' });
 
-    const empresa_id  = req.usuario.empresa_id  || 1;
-    const sucursal_id = req.usuario.sucursal_id  || 1;
+    const empresa_id  = req.usuario.empresa_id;
+    const sucursal_id = await resolverSucursalOperativa(req);
 
     try {
       const wb   = XLSX.read(req.file.buffer, { type: 'buffer' });
@@ -242,7 +254,7 @@ export const importarProductos = async (req, res) => {
 export const deleteProducto = async (req, res) => {
   try {
     const { id } = req.params;
-    const empresa_id = req.usuario.empresa_id || 1;
+    const empresa_id = req.usuario.empresa_id;
     const filasEliminadas = await Producto.destroy({ where: { producto_id: id, empresa_id } });
     if (filasEliminadas === 0) return res.status(404).json({ error: "Producto no encontrado" });
     res.json({ msg: "Producto eliminado correctamente" });

@@ -3,7 +3,7 @@ import sequelize from '../config/database.js';
 
 const Caja = sequelize.define('Caja', {
   caja_id:             { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
-  sucursal_id:         { type: DataTypes.INTEGER, allowNull: true, defaultValue: 1 },
+  sucursal_id:         { type: DataTypes.INTEGER, allowNull: false },
   usuario_apertura_id: { type: DataTypes.INTEGER, allowNull: false },
   usuario_cierre_id:   { type: DataTypes.INTEGER, allowNull: true },
   monto_inicial:       { type: DataTypes.DECIMAL(12, 2), allowNull: false, defaultValue: 0 },

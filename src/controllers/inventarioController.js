@@ -5,6 +5,11 @@ import Producto from '../models/Producto.js';
 import StockSucursal from '../models/StockSucursalModel.js';
 import Usuario from '../models/Usuario.js';
 import Sucursal from '../models/SucursalModel.js';
+import {
+  resolverScopeSucursales,
+  resolverSucursalOperativa,
+  responderErrorScope
+} from '../utils/scope.js';
 
 const TIPOS_VALIDOS     = ['ENTRADA', 'SALIDA', 'PERDIDA'];
 const MOTIVOS_POR_TIPO  = {
@@ -17,7 +22,7 @@ export const registrarMovimiento = async (req, res) => {
   const t = await sequelize.transaction();
   try {
     const { producto_id, usuario_id, tipo_movimiento, motivo, cantidad, observaciones } = req.body;
-    const sucursal_id = req.body.sucursal_id || req.usuario.sucursal_id || 1;
+    const sucursal_id = await resolverSucursalOperativa(req);
 
     if (!producto_id || !cantidad || !tipo_movimiento) throw new Error("Faltan datos (producto, cantidad o tipo)");
     if (!TIPOS_VALIDOS.includes(tipo_movimiento)) throw new Error(`tipo_movimiento debe ser: ${TIPOS_VALIDOS.join(', ')}`);
@@ -25,7 +30,10 @@ export const registrarMovimiento = async (req, res) => {
       throw new Error(`Motivo inválido para ${tipo_movimiento}. Opciones: ${MOTIVOS_POR_TIPO[tipo_movimiento].join(', ')}`);
     }
 
-    const producto = await Producto.findByPk(producto_id, { transaction: t });
+    const producto = await Producto.findOne({
+      where: { producto_id, empresa_id: req.usuario.empresa_id },
+      transaction: t
+    });
     if (!producto) throw new Error("Producto no encontrado");
 
     let stockReg = await StockSucursal.findOne({ where: { producto_id, sucursal_id }, transaction: t });
@@ -65,14 +73,15 @@ export const registrarMovimiento = async (req, res) => {
     res.json({ mensaje: 'Inventario actualizado con éxito', nuevo_stock: stockNuevo });
   } catch (error) {
     await t.rollback();
-    res.status(500).json({ error: error.message });
+    responderErrorScope(res, error);
   }
 };
 
 export const getHistorial = async (req, res) => {
   try {
     const { producto_id, tipo_movimiento, fechaInicio, fechaFin } = req.query;
-    const where = {};
+    const scope = await resolverScopeSucursales(req);
+    const where = { sucursal_id: scope.whereSucursal };
     if (producto_id)    where.producto_id      = producto_id;
     if (tipo_movimiento) where.tipo_movimiento = tipo_movimiento;
     if (fechaInicio || fechaFin) {
@@ -87,7 +96,7 @@ export const getHistorial = async (req, res) => {
       include: [
         { model: Producto,  attributes: ['nombre', 'codigo_barras'] },
         { model: Usuario,   attributes: ['nombre'] },
-        { model: Sucursal,  attributes: ['nombre'], required: false }
+        { model: Sucursal,  attributes: ['nombre'], where: { empresa_id: scope.empresa_id }, required: true }
       ],
       order: [['fecha', 'DESC']]
     });
@@ -101,6 +110,6 @@ export const getHistorial = async (req, res) => {
       nombre_sucursal: m.Sucursal?.nombre || null
     })));
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    responderErrorScope(res, error);
   }
 };

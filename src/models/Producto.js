@@ -3,7 +3,7 @@ import sequelize from "../config/database.js";
 
 const Producto = sequelize.define("Producto", {
   producto_id:      { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
-  empresa_id:       { type: DataTypes.INTEGER, allowNull: true, defaultValue: 1 },
+  empresa_id:       { type: DataTypes.INTEGER, allowNull: false },
   codigo_barras:    { type: DataTypes.STRING },
   nombre:           { type: DataTypes.STRING },
   descripcion:      { type: DataTypes.STRING },

@@ -7,13 +7,15 @@ import StockSucursal from "../models/StockSucursalModel.js";
 import CajaModel from "../models/CajaModel.js";
 import MovimientoCaja from "../models/MovimientoCaja.js";
 import { Op } from "sequelize";
+import { resolverScopeSucursales, resolverSucursalOperativa, responderErrorScope } from "../utils/scope.js";
 
 export const listarCompras = async (req, res) => {
   try {
-    const esAdmin = req.usuario.rol === 1 || req.usuario.rol_id === 1;
-    const filtro = esAdmin
-      ? { empresa_id: req.usuario.empresa_id }
-      : { sucursal_id: req.usuario.sucursal_id };
+    const scope = await resolverScopeSucursales(req);
+    const filtro = {
+      empresa_id: scope.empresa_id,
+      sucursal_id: scope.whereSucursal
+    };
 
     const { fechaInicio, fechaFin } = req.query;
     if (fechaInicio && fechaFin) {
@@ -50,7 +52,7 @@ export const listarCompras = async (req, res) => {
 
     res.json(result);
   } catch (err) {
-    res.status(500).json({ error: 'Error al obtener compras', detalle: err.message });
+    responderErrorScope(res, err);
   }
 };
 
@@ -62,11 +64,12 @@ export const crearCompra = async (req, res) => {
 
   const t = await sequelize.transaction();
   try {
+    const sucursal_id = await resolverSucursalOperativa(req);
     const total = items.reduce((s, i) => s + Number(i.costo_unitario) * Number(i.cantidad), 0);
 
     const compra = await Compra.create({
       empresa_id:  req.usuario.empresa_id,
-      sucursal_id: req.usuario.sucursal_id,
+      sucursal_id,
       usuario_id:  req.usuario.id,
       proveedor_id: proveedor_id || null,
       folio: folio || null,
@@ -88,7 +91,7 @@ export const crearCompra = async (req, res) => {
       // Actualiza stock si el producto existe
       if (item.producto_id) {
         const stock = await StockSucursal.findOne({
-          where: { producto_id: item.producto_id, sucursal_id: req.usuario.sucursal_id },
+          where: { producto_id: item.producto_id, sucursal_id },
           transaction: t
         });
         if (stock) {
@@ -96,7 +99,7 @@ export const crearCompra = async (req, res) => {
         } else {
           await StockSucursal.create({
             producto_id:  item.producto_id,
-            sucursal_id:  req.usuario.sucursal_id,
+            sucursal_id,
             stock_actual: Number(item.cantidad),
             stock_minimo: 0
           }, { transaction: t });
@@ -104,7 +107,7 @@ export const crearCompra = async (req, res) => {
         // Actualiza costo en producto
         await Producto.update(
           { precio_costo: item.costo_unitario },
-          { where: { producto_id: item.producto_id }, transaction: t }
+          { where: { producto_id: item.producto_id, empresa_id: req.usuario.empresa_id }, transaction: t }
         );
       }
     }
@@ -112,7 +115,7 @@ export const crearCompra = async (req, res) => {
     // Opcional: registrar egreso en la caja abierta
     if (descontar_de_caja) {
       const cajaAbierta = await CajaModel.findOne({
-        where: { sucursal_id: req.usuario.sucursal_id, fecha_cierre: null }
+        where: { sucursal_id, fecha_cierre: null }
       });
       if (cajaAbierta) {
         await MovimientoCaja.create({
@@ -129,6 +132,6 @@ export const crearCompra = async (req, res) => {
     res.status(201).json({ mensaje: 'Compra registrada', compra_id: compra.compra_id });
   } catch (err) {
     await t.rollback();
-    res.status(500).json({ error: 'Error al registrar compra', detalle: err.message });
+    responderErrorScope(res, err);
   }
 };

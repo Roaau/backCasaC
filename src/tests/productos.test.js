@@ -33,6 +33,7 @@ jest.mock('multer', () => {
 jest.mock('xlsx', () => ({ readFile: jest.fn(), utils: { sheet_to_json: jest.fn() } }));
 
 const { default: Producto } = require('../models/Producto.js');
+const { default: Sucursal } = require('../models/SucursalModel.js');
 const { getAll }            = require('../controllers/productosController.js');
 
 const makeRow = (data) => ({ toJSON: () => data, ...data, StockSucursals: [] });
@@ -45,7 +46,10 @@ const mockRes = () => {
 };
 
 describe('Productos — getAll()', () => {
-  beforeEach(() => jest.clearAllMocks());
+  beforeEach(() => {
+    jest.clearAllMocks();
+    Sucursal.findOne.mockResolvedValue({ sucursal_id: 1, empresa_id: 1 });
+  });
 
   test('devuelve lista de productos con paginación', async () => {
     Producto.findAndCountAll.mockResolvedValue({

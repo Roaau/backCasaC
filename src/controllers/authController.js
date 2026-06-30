@@ -63,8 +63,8 @@ export const login = async (req, res) => {
       {
         id:            user.usuario_id,
         rol:           user.rol_id,
-        empresa_id:    user.empresa_id  || 1,
-        sucursal_id:   user.sucursal_id || 1,
+        empresa_id:    user.empresa_id  ?? null,
+        sucursal_id:   user.sucursal_id ?? null,
         es_superadmin: user.es_superadmin === true
       },
       process.env.JWT_SECRET,
@@ -82,8 +82,8 @@ export const login = async (req, res) => {
       usuario:           user.usuario,
       nombre:            user.nombre,
       rol_id:            user.rol_id,
-      empresa_id:        user.empresa_id  || 1,
-      sucursal_id:       user.sucursal_id || 1,
+      empresa_id:        user.empresa_id  ?? null,
+      sucursal_id:       user.sucursal_id ?? null,
       foto_perfil:       user.foto_perfil ?? null,
       color_tema:        user.color_tema  ?? null,
       sucursal_nombre:   sucursal?.nombre      ?? 'Sucursal Principal',

@@ -10,12 +10,13 @@ import Caja from "../models/CajaModel.js";
 import MovimientoCaja from "../models/MovimientoCaja.js";
 import CfdiVenta from "../models/CfdiVenta.js";
 import ClienteFiscal from "../models/ClienteFiscal.js";
+import { esAdminEmpresa, resolverSucursalOperativa, responderErrorScope } from "../utils/scope.js";
 
 export const crearVenta = async (req, res) => {
   const t = await sequelize.transaction();
   try {
     const { usuario_id, total, tipo_venta, pedido_numero, folio, detalles, forma_pago, datos_cfdi } = req.body;
-    const sucursal_id = req.body.sucursal_id || req.usuario.sucursal_id || 1;
+    const sucursal_id = await resolverSucursalOperativa(req);
 
     if (!['Tienda', 'Pedido'].includes(tipo_venta)) throw new Error("tipo_venta debe ser 'Tienda' o 'Pedido'.");
     if (tipo_venta === 'Pedido' && !pedido_numero?.trim()) throw new Error("El número de pedido es obligatorio.");
@@ -29,7 +30,10 @@ export const crearVenta = async (req, res) => {
     }, { transaction: t });
 
     for (const item of detalles) {
-      const prod = await Producto.findByPk(item.producto_id, { transaction: t });
+      const prod = await Producto.findOne({
+        where: { producto_id: item.producto_id, empresa_id: req.usuario.empresa_id },
+        transaction: t
+      });
       if (!prod) throw new Error(`Producto ID ${item.producto_id} no existe.`);
 
       // Stock por sucursal
@@ -101,7 +105,7 @@ export const crearVenta = async (req, res) => {
 
   } catch (error) {
     await t.rollback();
-    res.status(500).json({ error: error.message });
+    responderErrorScope(res, error);
   }
 };
 
@@ -109,6 +113,7 @@ export const getVentaPorId = async (req, res) => {
   try {
     const { id } = req.params;
     const empresa_id = req.usuario.empresa_id;
+    const filtroEmpleado = esAdminEmpresa(req.usuario) ? "" : "AND v.sucursal_id = :sucursal_id";
     const [venta] = await sequelize.query(
       `SELECT v.venta_id, v.folio, v.fecha, v.total, v.tipo_venta, v.pedido_numero,
               u.nombre AS nombre_cajero, s.nombre AS nombre_sucursal
@@ -116,8 +121,9 @@ export const getVentaPorId = async (req, res) => {
        LEFT JOIN usuarios u ON v.usuario_id = u.usuario_id
        LEFT JOIN sucursales s ON v.sucursal_id = s.sucursal_id
        WHERE v.venta_id = :id
-         AND s.empresa_id = :empresa_id`,
-      { replacements: { id, empresa_id }, type: QueryTypes.SELECT }
+         AND s.empresa_id = :empresa_id
+         ${filtroEmpleado}`,
+      { replacements: { id, empresa_id, sucursal_id: req.usuario.sucursal_id }, type: QueryTypes.SELECT }
     );
     if (!venta) return res.status(404).json({ error: "Venta no encontrada" });
 

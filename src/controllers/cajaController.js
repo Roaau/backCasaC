@@ -2,10 +2,11 @@ import sequelize from '../config/database.js';
 import { QueryTypes, Op } from 'sequelize';
 import Caja from '../models/CajaModel.js';
 import MovimientoCaja from '../models/MovimientoCaja.js';
+import { resolverSucursalOperativa, responderErrorScope, validarSucursalEmpresa } from '../utils/scope.js';
 
 export const estadoCaja = async (req, res) => {
   try {
-    const sucursal_id = req.query.sucursal_id || req.usuario.sucursal_id || 1;
+    const sucursal_id = await resolverSucursalOperativa(req);
     const inicioDia = new Date(); inicioDia.setHours(0, 0, 0, 0);
     const finDia    = new Date(); finDia.setHours(23, 59, 59, 999);
 
@@ -19,14 +20,14 @@ export const estadoCaja = async (req, res) => {
     if (cajaHoy) return res.json({ abierta: true, datos: cajaHoy });
     return res.json({ abierta: false });
   } catch (err) {
-    return res.status(500).json({ error: err.message });
+    return responderErrorScope(res, err);
   }
 };
 
 export const abrirCaja = async (req, res) => {
   try {
     const { usuario_id, monto } = req.body;
-    const sucursal_id = req.body.sucursal_id || req.usuario.sucursal_id || 1;
+    const sucursal_id = await resolverSucursalOperativa(req);
 
     if (usuario_id === undefined || monto === undefined) {
       return res.status(400).json({ error: 'Faltan datos requeridos' });
@@ -49,7 +50,7 @@ export const abrirCaja = async (req, res) => {
     });
     res.status(201).json({ message: "Caja abierta", caja: nuevaCaja });
   } catch (error) {
-    res.status(500).json({ error: "Error al abrir" });
+    responderErrorScope(res, error);
   }
 };
 
@@ -60,12 +61,13 @@ export const obtenerTotalesCaja = async (req, res) => {
 
     const caja = await Caja.findByPk(cajaId);
     if (!caja) return res.status(404).json({ error: 'Caja no encontrada' });
+    await validarSucursalEmpresa(req.usuario, caja.sucursal_id);
 
     const montoInicial = parseFloat(caja.monto_inicial) || 0;
 
     const ventasRaw = await sequelize.query(
       `SELECT COALESCE(SUM(total), 0) as total FROM "ventas" WHERE fecha >= :fechaInicio AND sucursal_id = :sucursal_id`,
-      { replacements: { fechaInicio: caja.fecha_apertura, sucursal_id: caja.sucursal_id || 1 }, type: QueryTypes.SELECT }
+      { replacements: { fechaInicio: caja.fecha_apertura, sucursal_id: caja.sucursal_id }, type: QueryTypes.SELECT }
     );
     const totalVentas = parseFloat(ventasRaw[0].total) || 0;
 
@@ -82,14 +84,14 @@ export const obtenerTotalesCaja = async (req, res) => {
       fecha_apertura: caja.fecha_apertura
     });
   } catch (err) {
-    return res.status(500).json({ error: err.message });
+    return responderErrorScope(res, err);
   }
 };
 
 export const registrarMovimiento = async (req, res) => {
   try {
     const { caja_id, usuario_id, tipo_movimiento, monto, concepto } = req.body;
-    const sucursal_id = req.usuario.sucursal_id || 1;
+    const sucursal_id = await resolverSucursalOperativa(req);
     const caja = await Caja.findOne({ where: { caja_id, fecha_cierre: null, sucursal_id } });
     if (!caja) return res.status(400).json({ error: 'Caja cerrada o no pertenece a esta sucursal' });
 
@@ -99,7 +101,7 @@ export const registrarMovimiento = async (req, res) => {
     });
     return res.json({ mensaje: 'Movimiento registrado', movimiento: mov });
   } catch (err) {
-    return res.status(500).json({ error: err.message });
+    return responderErrorScope(res, err);
   }
 };
 
@@ -115,9 +117,17 @@ export const cerrarCaja = async (req, res) => {
 
     if (!idCaja || idUsuario === undefined) throw new Error(`Datos faltantes. Caja: ${idCaja}, Usuario: ${idUsuario}`);
 
+    const caja = await Caja.findByPk(Number(idCaja), { transaction: t });
+    if (!caja) {
+      const error = new Error('Caja no encontrada');
+      error.status = 404;
+      throw error;
+    }
+    await validarSucursalEmpresa(req.usuario, caja.sucursal_id);
+
     await Caja.update(
       { usuario_cierre_id: Number(idUsuario), monto_final: montoFinalDb, fecha_cierre: new Date() },
-      { where: { caja_id: Number(idCaja) }, transaction: t }
+      { where: { caja_id: Number(idCaja), sucursal_id: caja.sucursal_id }, transaction: t }
     );
 
     if (diferenciaDb !== 0) {
@@ -134,6 +144,6 @@ export const cerrarCaja = async (req, res) => {
     return res.json({ mensaje: 'Caja cerrada correctamente' });
   } catch (err) {
     await t.rollback();
-    return res.status(500).json({ error: err.message });
+    return responderErrorScope(res, err);
   }
 };

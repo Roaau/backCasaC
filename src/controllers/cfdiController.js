@@ -2,13 +2,15 @@ import sequelize from "../config/database.js";
 import { QueryTypes } from "sequelize";
 import CfdiVenta from "../models/CfdiVenta.js";
 import { enviarFacturaPorCorreo } from "../services/emailService.js";
+import { filtroEmpresa } from "../utils/filtros.js";
+import { esAdminEmpresa } from "../utils/scope.js";
 
 export const getCfdis = async (req, res) => {
   try {
     const { fechaInicio, fechaFin } = req.query;
-    const empresa_id = req.usuario.empresa_id;
+    const { clausula, params } = filtroEmpresa(req.usuario, "v.sucursal_id", "s", req.query);
 
-    const replacements = { empresa_id };
+    const replacements = { ...params };
     let dateClause = "";
 
     if (fechaInicio && fechaFin) {
@@ -43,7 +45,8 @@ export const getCfdis = async (req, res) => {
        FROM cfdi_ventas c
        JOIN ventas v ON c.venta_id = v.venta_id
        JOIN sucursales s ON v.sucursal_id = s.sucursal_id
-       WHERE s.empresa_id = :empresa_id
+       WHERE 1 = 1
+       ${clausula}
        ${dateClause}
        ORDER BY c.creado_en DESC`,
       { replacements, type: QueryTypes.SELECT }
@@ -66,13 +69,15 @@ export const timbrarCfdi = async (req, res) => {
     const { cfdiId } = req.params;
     const { receptor_rfc, receptor_nombre, receptor_cp, receptor_regimen, uso_cfdi } = req.body;
     const empresa_id = req.usuario.empresa_id;
+    const esAdmin = esAdminEmpresa(req.usuario);
 
     const [cfdi] = await sequelize.query(
       `SELECT c.cfdi_id, c.estado FROM cfdi_ventas c
        JOIN ventas v ON c.venta_id = v.venta_id
        JOIN sucursales s ON v.sucursal_id = s.sucursal_id
-       WHERE c.cfdi_id = :cfdiId AND s.empresa_id = :empresa_id`,
-      { replacements: { cfdiId, empresa_id }, type: QueryTypes.SELECT }
+       WHERE c.cfdi_id = :cfdiId AND s.empresa_id = :empresa_id
+         AND (:esAdmin = true OR v.sucursal_id = :sucursal_id)`,
+      { replacements: { cfdiId, empresa_id, esAdmin, sucursal_id: req.usuario.sucursal_id }, type: QueryTypes.SELECT }
     );
     if (!cfdi) return res.status(404).json({ error: "CFDI no encontrado" });
 
@@ -109,6 +114,7 @@ export const cancelarCfdi = async (req, res) => {
     const { cfdiId } = req.params;
     const { motivo } = req.body;
     const empresa_id = req.usuario.empresa_id;
+    const esAdmin = esAdminEmpresa(req.usuario);
 
     const motivosValidos = ["01", "02", "03", "04"];
     if (!motivo || !motivosValidos.includes(motivo)) {
@@ -119,8 +125,9 @@ export const cancelarCfdi = async (req, res) => {
       `SELECT c.cfdi_id, c.estado FROM cfdi_ventas c
        JOIN ventas v ON c.venta_id = v.venta_id
        JOIN sucursales s ON v.sucursal_id = s.sucursal_id
-       WHERE c.cfdi_id = :cfdiId AND s.empresa_id = :empresa_id`,
-      { replacements: { cfdiId, empresa_id }, type: QueryTypes.SELECT }
+       WHERE c.cfdi_id = :cfdiId AND s.empresa_id = :empresa_id
+         AND (:esAdmin = true OR v.sucursal_id = :sucursal_id)`,
+      { replacements: { cfdiId, empresa_id, esAdmin, sucursal_id: req.usuario.sucursal_id }, type: QueryTypes.SELECT }
     );
     if (!cfdi) return res.status(404).json({ error: "CFDI no encontrado" });
 
@@ -147,13 +154,15 @@ export const enviarCorreoCfdi = async (req, res) => {
     }
 
     const empresa_id = req.usuario.empresa_id;
+    const esAdmin = esAdminEmpresa(req.usuario);
     const [cfdi] = await sequelize.query(
       `SELECT c.*, v.folio AS folio_venta, v.fecha AS fecha_venta, v.total AS total_venta
        FROM cfdi_ventas c
        JOIN ventas v ON c.venta_id = v.venta_id
        JOIN sucursales s ON v.sucursal_id = s.sucursal_id
-       WHERE c.cfdi_id = :cfdiId AND s.empresa_id = :empresa_id`,
-      { replacements: { cfdiId, empresa_id }, type: QueryTypes.SELECT }
+       WHERE c.cfdi_id = :cfdiId AND s.empresa_id = :empresa_id
+         AND (:esAdmin = true OR v.sucursal_id = :sucursal_id)`,
+      { replacements: { cfdiId, empresa_id, esAdmin, sucursal_id: req.usuario.sucursal_id }, type: QueryTypes.SELECT }
     );
 
     if (!cfdi) return res.status(404).json({ error: "CFDI no encontrado" });
@@ -192,13 +201,15 @@ export const getXmlCfdi = async (req, res) => {
     const { cfdiId } = req.params;
 
     const empresa_id = req.usuario.empresa_id;
+    const esAdmin = esAdminEmpresa(req.usuario);
     const [row] = await sequelize.query(
       `SELECT c.xml_cfdi, v.folio
        FROM cfdi_ventas c
        JOIN ventas v ON c.venta_id = v.venta_id
        JOIN sucursales s ON v.sucursal_id = s.sucursal_id
-       WHERE c.cfdi_id = :cfdiId AND s.empresa_id = :empresa_id`,
-      { replacements: { cfdiId, empresa_id }, type: QueryTypes.SELECT }
+       WHERE c.cfdi_id = :cfdiId AND s.empresa_id = :empresa_id
+         AND (:esAdmin = true OR v.sucursal_id = :sucursal_id)`,
+      { replacements: { cfdiId, empresa_id, esAdmin, sucursal_id: req.usuario.sucursal_id }, type: QueryTypes.SELECT }
     );
 
     if (!row) return res.status(404).json({ error: "CFDI no encontrado" });
