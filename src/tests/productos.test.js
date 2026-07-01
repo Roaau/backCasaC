@@ -21,6 +21,10 @@ jest.mock('../models/StockSucursalModel.js', () => ({
   __esModule: true,
   default: { findOne: jest.fn(), create: jest.fn(), findAll: jest.fn(), update: jest.fn() }
 }));
+jest.mock('../models/MovimientoInventario.js', () => ({
+  __esModule: true,
+  default: { create: jest.fn() }
+}));
 jest.mock('../models/SucursalModel.js', () => ({
   __esModule: true,
   default: { findAll: jest.fn(), findOne: jest.fn(), findByPk: jest.fn() }
@@ -33,8 +37,10 @@ jest.mock('multer', () => {
 jest.mock('xlsx', () => ({ readFile: jest.fn(), utils: { sheet_to_json: jest.fn() } }));
 
 const { default: Producto } = require('../models/Producto.js');
+const { default: StockSucursal } = require('../models/StockSucursalModel.js');
+const { default: MovimientoInventario } = require('../models/MovimientoInventario.js');
 const { default: Sucursal } = require('../models/SucursalModel.js');
-const { getAll }            = require('../controllers/productosController.js');
+const { getAll, createProducto } = require('../controllers/productosController.js');
 
 const makeRow = (data) => ({ toJSON: () => data, ...data, StockSucursals: [] });
 
@@ -83,5 +89,55 @@ describe('Productos — getAll()', () => {
     await getAll(req, res);
     const [callArgs] = Producto.findAndCountAll.mock.calls;
     expect(callArgs[0].where).toMatchObject({ empresa_id: 5 });
+  });
+});
+
+describe('Productos - createProducto()', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    Sucursal.findOne.mockResolvedValue({ sucursal_id: 3, empresa_id: 5 });
+  });
+
+  test('registra stock y movimiento de inventario para reportes', async () => {
+    Producto.create.mockResolvedValue({
+      producto_id: 10,
+      nombre: 'Taladro',
+      codigo_barras: 'TAL-10',
+      stock_actual: 7,
+      stock_minimo: 2
+    });
+    StockSucursal.create.mockResolvedValue({});
+    MovimientoInventario.create.mockResolvedValue({});
+
+    const req = {
+      body: { nombre: 'Taladro', codigo_barras: 'TAL-10', stock_actual: 7, stock_minimo: 2, sucursal_id: 3 },
+      query: {},
+      usuario: { id: 22, rol: 1, empresa_id: 5, sucursal_id: 1 }
+    };
+    const res = mockRes();
+
+    await createProducto(req, res);
+
+    expect(Producto.create).toHaveBeenCalledWith(expect.objectContaining({
+      empresa_id: 5,
+      nombre: 'Taladro'
+    }));
+    expect(StockSucursal.create).toHaveBeenCalledWith(expect.objectContaining({
+      producto_id: 10,
+      sucursal_id: 3,
+      stock_actual: 7
+    }));
+    expect(MovimientoInventario.create).toHaveBeenCalledWith(expect.objectContaining({
+      producto_id: 10,
+      sucursal_id: 3,
+      usuario_id: 22,
+      tipo_movimiento: 'ENTRADA',
+      motivo: 'ALTA',
+      cantidad: 7,
+      stock_nuevo: 7
+    }));
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
+      msg: 'Producto creado correctamente'
+    }));
   });
 });

@@ -2,6 +2,7 @@ import { Op } from "sequelize";
 import Producto from "../models/Producto.js";
 import StockSucursal from "../models/StockSucursalModel.js";
 import Sucursal from "../models/SucursalModel.js";
+import MovimientoInventario from "../models/MovimientoInventario.js";
 import multer from "multer";
 import XLSX from "xlsx";
 import {
@@ -127,13 +128,29 @@ export const createProducto = async (req, res) => {
     if (!data.minimo_mayoreo || Number(data.minimo_mayoreo) === 0) data.minimo_mayoreo = null;
 
     const nuevoProducto = await Producto.create(data);
+    const stockInicial = Number(nuevoProducto.stock_actual) || 0;
 
     // Crear registro de stock para todas las sucursales de esta empresa
     await StockSucursal.create({
       producto_id:  nuevoProducto.producto_id,
       sucursal_id,
-      stock_actual: nuevoProducto.stock_actual || 0,
+      stock_actual: stockInicial,
       stock_minimo: nuevoProducto.stock_minimo || 0
+    });
+
+    await MovimientoInventario.create({
+      producto_id: nuevoProducto.producto_id,
+      nombre_producto: nuevoProducto.nombre,
+      codigo_barras: nuevoProducto.codigo_barras,
+      usuario_id: req.usuario.id,
+      sucursal_id,
+      tipo_movimiento: "ENTRADA",
+      motivo: "ALTA",
+      cantidad: stockInicial,
+      stock_anterior: 0,
+      stock_nuevo: stockInicial,
+      observaciones: "Alta inicial de producto",
+      fecha: new Date()
     });
 
     res.json({ msg: "Producto creado correctamente", producto: nuevoProducto });
@@ -231,6 +248,22 @@ export const importarProductos = async (req, res) => {
               stock_minimo: Number(row.stock_minimo) || 0
             }).catch(() => {}) // ignorar si ya existe
           ));
+
+          const stockInicial = Number(row.stock_actual) || 0;
+          await MovimientoInventario.create({
+            producto_id: producto.producto_id,
+            nombre_producto: producto.nombre,
+            codigo_barras: producto.codigo_barras,
+            usuario_id: req.usuario.id,
+            sucursal_id,
+            tipo_movimiento: "ENTRADA",
+            motivo: "ALTA",
+            cantidad: stockInicial,
+            stock_anterior: 0,
+            stock_nuevo: stockInicial,
+            observaciones: "Alta inicial por importacion",
+            fecha: new Date()
+          });
 
           importados++;
         } catch (rowErr) {
