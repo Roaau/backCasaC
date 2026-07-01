@@ -2,7 +2,24 @@ import Sucursal from '../models/SucursalModel.js';
 import StockSucursal from '../models/StockSucursalModel.js';
 import Producto from '../models/Producto.js';
 import sequelize from '../config/database.js';
-import { obtenerEmpresaId, responderErrorScope } from '../utils/scope.js';
+import { esAdminEmpresa, obtenerEmpresaId, responderErrorScope } from '../utils/scope.js';
+
+const exigirAdmin = (usuario) => {
+  if (!esAdminEmpresa(usuario)) {
+    const error = new Error('Solo el administrador puede administrar sucursales');
+    error.status = 403;
+    throw error;
+  }
+};
+
+const payloadSucursal = (body) => ({
+  nombre: body.nombre,
+  direccion: body.direccion,
+  cp_sat: body.cp_sat,
+  latitud: body.latitud,
+  longitud: body.longitud,
+  logo_b64: body.logo_b64
+});
 
 export const getSucursales = async (req, res) => {
   try {
@@ -20,9 +37,10 @@ export const getSucursales = async (req, res) => {
 export const createSucursal = async (req, res) => {
   const t = await sequelize.transaction();
   try {
+    exigirAdmin(req.usuario);
     const empresa_id = obtenerEmpresaId(req.usuario);
     const sucursal = await Sucursal.create(
-      { ...req.body, empresa_id },
+      { ...payloadSucursal(req.body), empresa_id },
       { transaction: t }
     );
 
@@ -45,10 +63,11 @@ export const createSucursal = async (req, res) => {
 
 export const updateSucursal = async (req, res) => {
   try {
-    const empresa_id = req.usuario.empresa_id;
-    await Sucursal.update(req.body, { where: { sucursal_id: req.params.id, empresa_id } });
+    exigirAdmin(req.usuario);
+    const empresa_id = obtenerEmpresaId(req.usuario);
+    await Sucursal.update(payloadSucursal(req.body), { where: { sucursal_id: req.params.id, empresa_id } });
     res.json({ mensaje: 'Sucursal actualizada' });
   } catch (e) {
-    res.status(500).json({ error: e.message });
+    responderErrorScope(res, e);
   }
 };
