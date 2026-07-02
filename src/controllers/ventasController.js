@@ -11,6 +11,7 @@ import CfdiVenta from "../models/CfdiVenta.js";
 import ClienteFiscal from "../models/ClienteFiscal.js";
 import { esAdminEmpresa, resolverSucursalOperativa, responderErrorScope } from "../utils/scope.js";
 import { registrarAuditoria } from "../utils/auditoria.js";
+import { rangoFechasReporte } from "../utils/fechas.js";
 
 export const crearVenta = async (req, res) => {
   const t = await sequelize.transaction();
@@ -204,8 +205,7 @@ export const listarPedidos = async (req, res) => {
   try {
     const fechaInicio = req.query.fechaInicio || new Date().toISOString().slice(0, 10);
     const fechaFin = req.query.fechaFin || fechaInicio;
-    const inicio = new Date(`${fechaInicio}T00:00:00.000`);
-    const fin = new Date(`${fechaFin}T23:59:59.999`);
+    const { inicio, fin } = rangoFechasReporte(fechaInicio, fechaFin);
     const empresa_id = req.usuario.empresa_id;
     const filtroEmpleado = esAdminEmpresa(req.usuario) ? "" : "AND v.sucursal_id = :sucursal_id";
 
@@ -288,4 +288,5 @@ export const actualizarEstadoPedido = async (req, res) => {
     responderErrorScope(res, err);
   }
 };
+
 
