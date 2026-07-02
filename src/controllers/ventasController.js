@@ -8,6 +8,7 @@ import sequelize from "../config/database.js";
 import { QueryTypes } from "sequelize";
 import Caja from "../models/CajaModel.js";
 import MovimientoCaja from "../models/MovimientoCaja.js";
+import MovimientoInventario from "../models/MovimientoInventario.js";
 import CfdiVenta from "../models/CfdiVenta.js";
 import ClienteFiscal from "../models/ClienteFiscal.js";
 import { esAdminEmpresa, resolverSucursalOperativa, responderErrorScope } from "../utils/scope.js";
@@ -66,8 +67,26 @@ export const crearVenta = async (req, res) => {
         subtotal:       item.subtotal
       }, { transaction: t });
 
-      await stockReg.decrement('stock_actual', { by: item.cantidad, transaction: t });
+      const stockAnterior = Number(stockReg.stock_actual) || 0;
+      const cantidad = Number(item.cantidad);
+      const stockNuevo = stockAnterior - cantidad;
+
+      await stockReg.decrement('stock_actual', { by: cantidad, transaction: t });
       await prod.decrement('stock_actual', { by: item.cantidad, transaction: t });
+      await MovimientoInventario.create({
+        producto_id: item.producto_id,
+        nombre_producto: prod.nombre,
+        codigo_barras: prod.codigo_barras,
+        usuario_id: usuario_id,
+        sucursal_id,
+        tipo_movimiento: "SALIDA",
+        motivo: "VENTA",
+        cantidad,
+        stock_anterior: stockAnterior,
+        stock_nuevo: stockNuevo,
+        observaciones: `Venta ${folio}`,
+        fecha: new Date()
+      }, { transaction: t });
     }
 
     const cajaActiva = await Caja.findOne({

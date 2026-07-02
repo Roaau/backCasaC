@@ -13,7 +13,7 @@ jest.mock('../models/Producto.js', () => ({
   __esModule: true,
   default: {
     findAll: jest.fn(), findAndCountAll: jest.fn(),
-    findOne: jest.fn(), create: jest.fn(),
+    findOne: jest.fn(), findByPk: jest.fn(), create: jest.fn(),
     update: jest.fn(), destroy: jest.fn(), count: jest.fn()
   }
 }));
@@ -96,9 +96,10 @@ describe('Productos - createProducto()', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     Sucursal.findOne.mockResolvedValue({ sucursal_id: 3, empresa_id: 5 });
+    Sucursal.findAll.mockResolvedValue([{ sucursal_id: 3 }, { sucursal_id: 4 }]);
   });
 
-  test('registra stock y movimiento de inventario para reportes', async () => {
+  test('registra stock por sucursal y movimiento de inventario para reportes', async () => {
     Producto.create.mockResolvedValue({
       producto_id: 10,
       nombre: 'Taladro',
@@ -127,6 +128,11 @@ describe('Productos - createProducto()', () => {
       sucursal_id: 3,
       stock_actual: 7
     }));
+    expect(StockSucursal.create).toHaveBeenCalledWith(expect.objectContaining({
+      producto_id: 10,
+      sucursal_id: 4,
+      stock_actual: 0
+    }));
     expect(MovimientoInventario.create).toHaveBeenCalledWith(expect.objectContaining({
       producto_id: 10,
       sucursal_id: 3,
@@ -138,6 +144,57 @@ describe('Productos - createProducto()', () => {
     }));
     expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
       msg: 'Producto creado correctamente'
+    }));
+  });
+
+  test('editar stock usa la sucursal solicitada y registra ajuste', async () => {
+    const stockUpdate = jest.fn().mockResolvedValue({});
+    Sucursal.findOne.mockImplementation(({ where }) => Promise.resolve({
+      sucursal_id: where.sucursal_id,
+      empresa_id: where.empresa_id
+    }));
+    Producto.findOne.mockResolvedValue({
+      producto_id: 10,
+      nombre: 'Taladro',
+      codigo_barras: 'TAL-10',
+      stock_minimo: 2
+    });
+    Producto.update.mockResolvedValue([1]);
+    Producto.findByPk.mockResolvedValue({ producto_id: 10, nombre: 'Taladro', stock_actual: 12 });
+    StockSucursal.findOne.mockResolvedValue({ stock_actual: 5, update: stockUpdate });
+    MovimientoInventario.create.mockResolvedValue({});
+
+    const req = {
+      params: { id: 10 },
+      body: { nombre: 'Taladro', stock_actual: 12, stock_minimo: 2, sucursal_id: 4 },
+      query: {},
+      usuario: { id: 22, rol: 1, empresa_id: 5, sucursal_id: 1 }
+    };
+    const res = mockRes();
+
+    const { updateProducto } = require('../controllers/productosController.js');
+    await updateProducto(req, res);
+
+    expect(StockSucursal.findOne).toHaveBeenCalledWith({
+      where: { producto_id: 10, sucursal_id: 4 }
+    });
+    expect(stockUpdate).toHaveBeenCalledWith(expect.objectContaining({
+      stock_actual: 12,
+      stock_minimo: 2
+    }));
+    expect(Producto.update).toHaveBeenCalledWith(
+      expect.not.objectContaining({ stock_actual: expect.anything() }),
+      expect.objectContaining({ where: { producto_id: 10, empresa_id: 5 } })
+    );
+    expect(MovimientoInventario.create).toHaveBeenCalledWith(expect.objectContaining({
+      producto_id: 10,
+      sucursal_id: 4,
+      usuario_id: 22,
+      tipo_movimiento: 'ENTRADA',
+      motivo: 'AJUSTE',
+      cantidad: 7,
+      stock_anterior: 5,
+      stock_nuevo: 12
     }));
   });
 });

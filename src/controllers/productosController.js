@@ -129,14 +129,14 @@ export const createProducto = async (req, res) => {
 
     const nuevoProducto = await Producto.create(data);
     const stockInicial = Number(nuevoProducto.stock_actual) || 0;
+    const sucursales = await Sucursal.findAll({ where: { empresa_id, activa: true }, attributes: ['sucursal_id'] });
 
-    // Crear registro de stock para todas las sucursales de esta empresa
-    await StockSucursal.create({
+    await Promise.all(sucursales.map(s => StockSucursal.create({
       producto_id:  nuevoProducto.producto_id,
-      sucursal_id,
-      stock_actual: stockInicial,
+      sucursal_id:  s.sucursal_id,
+      stock_actual: s.sucursal_id === sucursal_id ? stockInicial : 0,
       stock_minimo: nuevoProducto.stock_minimo || 0
-    });
+    }).catch(() => {})));
 
     await MovimientoInventario.create({
       producto_id: nuevoProducto.producto_id,
@@ -172,15 +172,54 @@ export const updateProducto = async (req, res) => {
       data.minimo_mayoreo = null;
     }
 
-    const [updated] = await Producto.update(data, { where: { producto_id: id, empresa_id } });
+    const producto = await Producto.findOne({ where: { producto_id: id, empresa_id } });
+    if (!producto) return res.status(404).json({ error: "Producto no encontrado" });
+
+    const stockActualNuevo = data.stock_actual !== undefined ? Number(data.stock_actual) : undefined;
+    const stockMinimoNuevo = data.stock_minimo !== undefined ? Number(data.stock_minimo) : undefined;
+    const datosProducto = { ...data };
+    delete datosProducto.stock_actual;
+
+    const [updated] = await Producto.update(datosProducto, { where: { producto_id: id, empresa_id } });
     if (!updated) return res.status(404).json({ error: "Producto no encontrado" });
 
     // Si cambia stock_actual o stock_minimo, actualizar también StockSucursal de esta sucursal
-    const stockUpdate = {};
-    if (data.stock_actual !== undefined) stockUpdate.stock_actual = data.stock_actual;
-    if (data.stock_minimo !== undefined) stockUpdate.stock_minimo = data.stock_minimo;
-    if (Object.keys(stockUpdate).length > 0) {
-      await StockSucursal.update(stockUpdate, { where: { producto_id: id, sucursal_id } });
+    if (stockActualNuevo !== undefined || stockMinimoNuevo !== undefined) {
+      let stockReg = await StockSucursal.findOne({ where: { producto_id: id, sucursal_id } });
+      if (!stockReg) {
+        stockReg = await StockSucursal.create({
+          producto_id: id,
+          sucursal_id,
+          stock_actual: 0,
+          stock_minimo: stockMinimoNuevo ?? producto.stock_minimo ?? 0
+        });
+      }
+
+      const stockAnterior = Number(stockReg.stock_actual) || 0;
+      const stockUpdate = {};
+      if (stockActualNuevo !== undefined) stockUpdate.stock_actual = stockActualNuevo;
+      if (stockMinimoNuevo !== undefined) stockUpdate.stock_minimo = stockMinimoNuevo;
+
+      if (Object.keys(stockUpdate).length > 0) {
+        await stockReg.update(stockUpdate);
+      }
+
+      if (stockActualNuevo !== undefined && stockActualNuevo !== stockAnterior) {
+        await MovimientoInventario.create({
+          producto_id: Number(id),
+          nombre_producto: producto.nombre,
+          codigo_barras: producto.codigo_barras,
+          usuario_id: req.usuario.id,
+          sucursal_id,
+          tipo_movimiento: stockActualNuevo > stockAnterior ? "ENTRADA" : "SALIDA",
+          motivo: "AJUSTE",
+          cantidad: Math.abs(stockActualNuevo - stockAnterior),
+          stock_anterior: stockAnterior,
+          stock_nuevo: stockActualNuevo,
+          observaciones: "Ajuste desde edicion de producto",
+          fecha: new Date()
+        });
+      }
     }
 
     const productoActualizado = await Producto.findByPk(id);

@@ -6,6 +6,7 @@ import StockSucursal from '../models/StockSucursalModel.js';
 import Sucursal from '../models/SucursalModel.js';
 import Caja from '../models/CajaModel.js';
 import MovimientoCaja from '../models/MovimientoCaja.js';
+import MovimientoInventario from '../models/MovimientoInventario.js';
 import sequelize from '../config/database.js';
 import { Op } from 'sequelize';
 import {
@@ -96,11 +97,37 @@ export const crear = async (req, res) => {
       }, { transaction: t });
 
       if (d.producto_id && sucursal_id) {
-        const stock = await StockSucursal.findOne({
+        let stock = await StockSucursal.findOne({
           where: { producto_id: d.producto_id, sucursal_id },
           transaction: t
         });
-        if (stock) await stock.increment('stock_actual', { by: d.cantidad, transaction: t });
+        const cantidad = Number(d.cantidad);
+        const stockAnterior = stock ? Number(stock.stock_actual) || 0 : 0;
+        const stockNuevo = stockAnterior + cantidad;
+        if (stock) {
+          await stock.update({ stock_actual: stockNuevo }, { transaction: t });
+        } else {
+          stock = await StockSucursal.create({
+            producto_id: d.producto_id,
+            sucursal_id,
+            stock_actual: stockNuevo,
+            stock_minimo: 0
+          }, { transaction: t });
+        }
+        await MovimientoInventario.create({
+          producto_id: d.producto_id,
+          nombre_producto: d.nombre_producto,
+          codigo_barras: null,
+          usuario_id,
+          sucursal_id,
+          tipo_movimiento: "ENTRADA",
+          motivo: "DEVOLUCION",
+          cantidad,
+          stock_anterior: stockAnterior,
+          stock_nuevo: stockNuevo,
+          observaciones: `Devolucion de venta ${folio_venta}`,
+          fecha: new Date()
+        }, { transaction: t });
       }
     }
 

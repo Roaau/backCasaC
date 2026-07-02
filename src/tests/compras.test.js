@@ -33,6 +33,10 @@ jest.mock('../models/MovimientoCaja.js', () => ({
   __esModule: true,
   default: { create: jest.fn() }
 }));
+jest.mock('../models/MovimientoInventario.js', () => ({
+  __esModule: true,
+  default: { create: jest.fn() }
+}));
 jest.mock('../utils/scope.js', () => ({
   resolverScopeSucursales: jest.fn(),
   resolverSucursalOperativa: jest.fn(),
@@ -45,6 +49,7 @@ const { default: Compra } = require('../models/Compra.js');
 const { default: DetalleCompra } = require('../models/DetalleCompra.js');
 const { default: Producto } = require('../models/Producto.js');
 const { default: StockSucursal } = require('../models/StockSucursalModel.js');
+const { default: MovimientoInventario } = require('../models/MovimientoInventario.js');
 const { resolverScopeSucursales, resolverSucursalOperativa } = require('../utils/scope.js');
 const { listarCompras, crearCompra } = require('../controllers/comprasController.js');
 
@@ -96,6 +101,7 @@ describe('Compras - aislamiento multiempresa/sucursal', () => {
     Compra.create.mockResolvedValue({ compra_id: 30 });
     DetalleCompra.create.mockResolvedValue({});
     StockSucursal.findOne.mockResolvedValue({ stock_actual: 2, update: jest.fn().mockResolvedValue(true) });
+    MovimientoInventario.create.mockResolvedValue({});
     Producto.update.mockResolvedValue([1]);
 
     const req = {
@@ -120,6 +126,16 @@ describe('Compras - aislamiento multiempresa/sucursal', () => {
       { precio_costo: 100 },
       { where: { producto_id: 6, empresa_id: 15 }, transaction: tx }
     );
+    expect(MovimientoInventario.create).toHaveBeenCalledWith(expect.objectContaining({
+      producto_id: 6,
+      sucursal_id: 4,
+      usuario_id: 9,
+      tipo_movimiento: 'ENTRADA',
+      motivo: 'COMPRA',
+      cantidad: 3,
+      stock_anterior: 2,
+      stock_nuevo: 5
+    }), { transaction: tx });
     expect(tx.commit).toHaveBeenCalled();
     expect(res.status).toHaveBeenCalledWith(201);
   });

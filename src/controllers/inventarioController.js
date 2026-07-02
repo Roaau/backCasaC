@@ -10,6 +10,7 @@ import {
   resolverSucursalOperativa,
   responderErrorScope
 } from '../utils/scope.js';
+import { rangoFechasReporte } from '../utils/fechas.js';
 
 const TIPOS_VALIDOS     = ['ENTRADA', 'SALIDA', 'PERDIDA'];
 const MOTIVOS_POR_TIPO  = {
@@ -85,9 +86,10 @@ export const getHistorial = async (req, res) => {
     if (producto_id)    where.producto_id      = producto_id;
     if (tipo_movimiento) where.tipo_movimiento = tipo_movimiento;
     if (fechaInicio || fechaFin) {
+      const rango = rangoFechasReporte(fechaInicio || fechaFin, fechaFin || fechaInicio);
       where.fecha = {
-        ...(fechaInicio && { [Op.gte]: new Date(`${fechaInicio}T00:00:00`) }),
-        ...(fechaFin    && { [Op.lte]: new Date(`${fechaFin}T23:59:59`) })
+        [Op.gte]: rango.inicio,
+        [Op.lte]: rango.fin
       };
     }
 

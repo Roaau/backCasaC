@@ -6,8 +6,10 @@ import Producto from "../models/Producto.js";
 import StockSucursal from "../models/StockSucursalModel.js";
 import CajaModel from "../models/CajaModel.js";
 import MovimientoCaja from "../models/MovimientoCaja.js";
+import MovimientoInventario from "../models/MovimientoInventario.js";
 import { Op } from "sequelize";
 import { resolverScopeSucursales, resolverSucursalOperativa, responderErrorScope } from "../utils/scope.js";
+import { rangoFechasReporte } from "../utils/fechas.js";
 
 export const listarCompras = async (req, res) => {
   try {
@@ -19,11 +21,9 @@ export const listarCompras = async (req, res) => {
 
     const { fechaInicio, fechaFin } = req.query;
     if (fechaInicio && fechaFin) {
+      const rango = rangoFechasReporte(fechaInicio, fechaFin);
       filtro.fecha = {
-        [Op.between]: [
-          new Date(`${fechaInicio}T00:00:00`),
-          new Date(`${fechaFin}T23:59:59`)
-        ]
+        [Op.between]: [rango.inicio, rango.fin]
       };
     }
 
@@ -90,20 +90,37 @@ export const crearCompra = async (req, res) => {
 
       // Actualiza stock si el producto existe
       if (item.producto_id) {
-        const stock = await StockSucursal.findOne({
+        let stock = await StockSucursal.findOne({
           where: { producto_id: item.producto_id, sucursal_id },
           transaction: t
         });
+        const cantidad = Number(item.cantidad);
+        const stockAnterior = stock ? Number(stock.stock_actual) || 0 : 0;
+        const stockNuevo = stockAnterior + cantidad;
         if (stock) {
-          await stock.update({ stock_actual: stock.stock_actual + Number(item.cantidad) }, { transaction: t });
+          await stock.update({ stock_actual: stockNuevo }, { transaction: t });
         } else {
-          await StockSucursal.create({
+          stock = await StockSucursal.create({
             producto_id:  item.producto_id,
             sucursal_id,
-            stock_actual: Number(item.cantidad),
+            stock_actual: stockNuevo,
             stock_minimo: 0
           }, { transaction: t });
         }
+        await MovimientoInventario.create({
+          producto_id: item.producto_id,
+          nombre_producto: item.nombre_producto,
+          codigo_barras: null,
+          usuario_id: req.usuario.id,
+          sucursal_id,
+          tipo_movimiento: "ENTRADA",
+          motivo: "COMPRA",
+          cantidad,
+          stock_anterior: stockAnterior,
+          stock_nuevo: stockNuevo,
+          observaciones: `Compra${folio ? ' ' + folio : ''}`,
+          fecha: new Date()
+        }, { transaction: t });
         // Actualiza costo en producto
         await Producto.update(
           { precio_costo: item.costo_unitario },

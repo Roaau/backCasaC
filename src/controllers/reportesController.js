@@ -1,11 +1,13 @@
 import sequelize from '../config/database.js';
 import { QueryTypes } from 'sequelize';
 import { filtroEmpresa } from '../utils/filtros.js';
+import { rangoFechasReporte } from '../utils/fechas.js';
 import ExcelJS from 'exceljs';
 
 export const getReporteVentas = async (req, res) => {
     try {
         const { fechaInicio, fechaFin } = req.body;
+        const rango = rangoFechasReporte(fechaInicio, fechaFin);
         const { clausula, params } = filtroEmpresa(req.usuario, 'v.sucursal_id', 's', req.body);
 
         const query = `
@@ -28,8 +30,8 @@ export const getReporteVentas = async (req, res) => {
 
         const ventas = await sequelize.query(query, {
             replacements: {
-                inicio: `${fechaInicio} 00:00:00`,
-                fin:    `${fechaFin} 23:59:59`,
+                inicio: rango.inicio,
+                fin:    rango.fin,
                 ...params
             },
             type: QueryTypes.SELECT
@@ -48,6 +50,7 @@ export const getReporteVentas = async (req, res) => {
 export const getReporteProductos = async (req, res) => {
     try {
         const { fechaInicio, fechaFin } = req.body;
+        const rango = rangoFechasReporte(fechaInicio, fechaFin);
         const { clausula, params } = filtroEmpresa(req.usuario, 'v.sucursal_id', 's', req.body);
 
         const query = `
@@ -69,8 +72,8 @@ export const getReporteProductos = async (req, res) => {
 
         const productos = await sequelize.query(query, {
             replacements: {
-                inicio: `${fechaInicio} 00:00:00`,
-                fin:    `${fechaFin} 23:59:59`,
+                inicio: rango.inicio,
+                fin:    rango.fin,
                 ...params
             },
             type: QueryTypes.SELECT
@@ -86,12 +89,13 @@ export const getReporteProductos = async (req, res) => {
 export const getReporteCaja = async (req, res) => {
     try {
         const { fechaInicio, fechaFin } = req.body;
+        const rango = rangoFechasReporte(fechaInicio, fechaFin);
         const { clausula: filtroCortes, params: paramsCortes }     = filtroEmpresa(req.usuario, 'c.sucursal_id', 's', req.body);
         const { clausula: filtroMovimientos, params: paramsMov }   = filtroEmpresa(req.usuario, 'c.sucursal_id', 's', req.body);
 
         const replacements = {
-            inicio: `${fechaInicio} 00:00:00`,
-            fin:    `${fechaFin} 23:59:59`
+            inicio: rango.inicio,
+            fin:    rango.fin
         };
 
         const queryCortes = `
@@ -148,6 +152,7 @@ export const getReporteCaja = async (req, res) => {
 export const getReporteInventario = async (req, res) => {
     try {
         const { fechaInicio, fechaFin } = req.body;
+        const rango = rangoFechasReporte(fechaInicio, fechaFin);
         const { clausula, params } = filtroEmpresa(req.usuario, 'm.sucursal_id', 's', req.body);
 
         const query = `
@@ -170,8 +175,8 @@ export const getReporteInventario = async (req, res) => {
 
         const movimientos = await sequelize.query(query, {
             replacements: {
-                inicio: `${fechaInicio} 00:00:00`,
-                fin:    `${fechaFin} 23:59:59`,
+                inicio: rango.inicio,
+                fin:    rango.fin,
                 ...params
             },
             type: QueryTypes.SELECT
@@ -187,11 +192,12 @@ export const getReporteInventario = async (req, res) => {
 export const getDatosGraficas = async (req, res) => {
     try {
         const { fechaInicio, fechaFin } = req.body;
+        const rango = rangoFechasReporte(fechaInicio, fechaFin);
         const { clausula, params } = filtroEmpresa(req.usuario, 'v.sucursal_id', 's', req.body);
 
         const replacements = {
-            inicio: `${fechaInicio} 00:00:00`,
-            fin:    `${fechaFin} 23:59:59`,
+            inicio: rango.inicio,
+            fin:    rango.fin,
             ...params
         };
 
@@ -234,9 +240,10 @@ export const getDatosGraficas = async (req, res) => {
 export const exportarExcel = async (req, res) => {
     try {
         const { tipo, fechaInicio, fechaFin } = req.body;
+        const rango = rangoFechasReporte(fechaInicio, fechaFin);
         const replacements = {
-            inicio: `${fechaInicio} 00:00:00`,
-            fin:    `${fechaFin} 23:59:59`
+            inicio: rango.inicio,
+            fin:    rango.fin
         };
 
         let filas = [];
