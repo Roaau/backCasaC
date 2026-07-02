@@ -13,6 +13,9 @@ jest.mock('../models/SucursalModel.js', () => ({
 jest.mock('../config/database.js', () => ({
   __esModule: true, default: { query: jest.fn() }
 }));
+jest.mock('../utils/auditoria.js', () => ({
+  registrarAuditoria: jest.fn()
+}));
 jest.mock('sequelize', () => ({
   QueryTypes: { SELECT: 'SELECT' },
   DataTypes: {
@@ -33,7 +36,7 @@ const mockRes = () => {
   return res;
 };
 
-describe('Caja — estadoCaja()', () => {
+describe('Caja â€” estadoCaja()', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     Sucursal.findOne.mockResolvedValue({ sucursal_id: 1, empresa_id: 1 });
@@ -56,7 +59,7 @@ describe('Caja — estadoCaja()', () => {
   });
 });
 
-describe('Caja — abrirCaja()', () => {
+describe('Caja â€” abrirCaja()', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     Sucursal.findOne.mockResolvedValue({ sucursal_id: 1, empresa_id: 1 });

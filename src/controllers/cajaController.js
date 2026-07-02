@@ -1,8 +1,32 @@
-import sequelize from '../config/database.js';
+﻿import sequelize from '../config/database.js';
 import { QueryTypes, Op } from 'sequelize';
 import Caja from '../models/CajaModel.js';
 import MovimientoCaja from '../models/MovimientoCaja.js';
 import { resolverSucursalOperativa, responderErrorScope, validarSucursalEmpresa } from '../utils/scope.js';
+import { registrarAuditoria } from '../utils/auditoria.js';
+
+async function calcularTotalesCaja(caja) {
+  const cajaId = Number(caja.caja_id);
+  const montoInicial = parseFloat(caja.monto_inicial) || 0;
+
+  const ventasRaw = await sequelize.query(
+    `SELECT COALESCE(SUM(total), 0) as total
+     FROM "ventas"
+     WHERE fecha >= :fechaInicio
+       AND sucursal_id = :sucursal_id
+       AND COALESCE(tipo_pago, 'efectivo') = 'efectivo'`,
+    { replacements: { fechaInicio: caja.fecha_apertura, sucursal_id: caja.sucursal_id }, type: QueryTypes.SELECT }
+  );
+  const totalVentas = parseFloat(ventasRaw[0]?.total) || 0;
+
+  const ingresosMov     = await MovimientoCaja.sum('monto', { where: { caja_id: cajaId, tipo_movimiento: 'INGRESO'    } }) || 0;
+  const egresosMov      = await MovimientoCaja.sum('monto', { where: { caja_id: cajaId, tipo_movimiento: 'EGRESO'     } }) || 0;
+  const devolucionesMov = await MovimientoCaja.sum('monto', { where: { caja_id: cajaId, tipo_movimiento: 'DEVOLUCION' } }) || 0;
+  const totalSalidas    = Number(egresosMov) + Number(devolucionesMov);
+  const montoEsperado   = montoInicial + Number(totalVentas) + Number(ingresosMov) - totalSalidas;
+
+  return { caja_id: cajaId, montoInicial, totalVentas, totalIngresos: Number(ingresosMov), totalEgresos: totalSalidas, montoEsperado, fecha_apertura: caja.fecha_apertura };
+}
 
 export const estadoCaja = async (req, res) => {
   try {
@@ -63,26 +87,7 @@ export const obtenerTotalesCaja = async (req, res) => {
     if (!caja) return res.status(404).json({ error: 'Caja no encontrada' });
     await validarSucursalEmpresa(req.usuario, caja.sucursal_id);
 
-    const montoInicial = parseFloat(caja.monto_inicial) || 0;
-
-    const ventasRaw = await sequelize.query(
-      `SELECT COALESCE(SUM(total), 0) as total FROM "ventas" WHERE fecha >= :fechaInicio AND sucursal_id = :sucursal_id`,
-      { replacements: { fechaInicio: caja.fecha_apertura, sucursal_id: caja.sucursal_id }, type: QueryTypes.SELECT }
-    );
-    const totalVentas = parseFloat(ventasRaw[0].total) || 0;
-
-    const ingresosMov     = await MovimientoCaja.sum('monto', { where: { caja_id: cajaId, tipo_movimiento: 'INGRESO'    } }) || 0;
-    const egresosMov      = await MovimientoCaja.sum('monto', { where: { caja_id: cajaId, tipo_movimiento: 'EGRESO'     } }) || 0;
-    const devolucionesMov = await MovimientoCaja.sum('monto', { where: { caja_id: cajaId, tipo_movimiento: 'DEVOLUCION' } }) || 0;
-    const totalSalidas    = egresosMov + devolucionesMov;
-
-    return res.json({
-      caja_id: caja.caja_id, montoInicial, totalVentas,
-      totalIngresos: ingresosMov,
-      totalEgresos: totalSalidas,
-      montoEsperado: montoInicial + totalVentas + ingresosMov - totalSalidas,
-      fecha_apertura: caja.fecha_apertura
-    });
+    return res.json(await calcularTotalesCaja(caja));
   } catch (err) {
     return responderErrorScope(res, err);
   }
@@ -95,9 +100,33 @@ export const registrarMovimiento = async (req, res) => {
     const caja = await Caja.findOne({ where: { caja_id, fecha_cierre: null, sucursal_id } });
     if (!caja) return res.status(400).json({ error: 'Caja cerrada o no pertenece a esta sucursal' });
 
+    const tipo = String(tipo_movimiento || '').toUpperCase();
+    const montoNum = Math.abs(Number(monto));
+    const conceptoLimpio = String(concepto || '').trim();
+
+    if (!['INGRESO', 'EGRESO'].includes(tipo)) return res.status(400).json({ error: 'Tipo de movimiento no valido' });
+    if (!montoNum || montoNum <= 0) return res.status(400).json({ error: 'Ingresa un monto mayor a cero' });
+    if (conceptoLimpio.length < 4) return res.status(400).json({ error: 'Agrega un motivo claro para la auditoria' });
+
+    const totales = await calcularTotalesCaja(caja);
+    if (tipo === 'EGRESO' && montoNum > totales.montoEsperado) {
+      return res.status(400).json({ error: `No hay suficiente efectivo disponible. Disponible: $${totales.montoEsperado.toFixed(2)}` });
+    }
+
     const mov = await MovimientoCaja.create({
-      caja_id, usuario_id, tipo_movimiento,
-      monto: Math.abs(monto), concepto: concepto || '', fecha: new Date()
+      caja_id,
+      usuario_id,
+      tipo_movimiento: tipo,
+      monto: montoNum,
+      concepto: conceptoLimpio,
+      fecha: new Date()
+    });
+    await registrarAuditoria(req, {
+      accion: "CAJA_MOVIMIENTO",
+      entidad: "movimiento_caja",
+      entidad_id: mov.movimiento_id,
+      sucursal_id,
+      detalle: { caja_id, tipo_movimiento: tipo, monto: montoNum, concepto: conceptoLimpio, efectivo_disponible_antes: totales.montoEsperado }
     });
     return res.json({ mensaje: 'Movimiento registrado', movimiento: mov });
   } catch (err) {
@@ -139,6 +168,15 @@ export const cerrarCaja = async (req, res) => {
         fecha: new Date()
       }, { transaction: t });
     }
+
+    await registrarAuditoria(req, {
+      accion: "CAJA_CIERRE",
+      entidad: "caja",
+      entidad_id: Number(idCaja),
+      sucursal_id: caja.sucursal_id,
+      detalle: { monto_final: montoFinalDb, diferencia: diferenciaDb },
+      transaction: t
+    });
 
     await t.commit();
     return res.json({ mensaje: 'Caja cerrada correctamente' });

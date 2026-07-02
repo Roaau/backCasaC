@@ -1,4 +1,4 @@
-import dotenv from "dotenv";
+﻿import dotenv from "dotenv";
 dotenv.config({ override: true });
 import * as Sentry from "@sentry/node";
 
@@ -11,7 +11,7 @@ if (process.env.SENTRY_DSN) {
 }
 
 if (!process.env.JWT_SECRET) {
-  console.error("❌ JWT_SECRET no está definido en .env — el servidor no puede iniciar de forma segura.");
+  console.error("âŒ JWT_SECRET no estÃ¡ definido en .env â€” el servidor no puede iniciar de forma segura.");
   process.exit(1);
 }
 
@@ -80,6 +80,7 @@ import "./models/DetalleCompra.js";
 import "./models/PagoCredito.js";
 import "./models/Cotizacion.js";
 import "./models/DetalleCotizacion.js";
+import "./models/Auditoria.js";
 import Empresa from "./models/EmpresaModel.js";
 import Sucursal from "./models/SucursalModel.js";
 import Producto from "./models/Producto.js";
@@ -125,7 +126,7 @@ app.use((req, res, next) => {
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-// Rate limiting — protección contra brute-force
+// Rate limiting â€” protecciÃ³n contra brute-force
 const loginLimit = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 30,
@@ -138,7 +139,7 @@ const otpLimit = rateLimit({
   max: 20,
   standardHeaders: true,
   legacyHeaders: false,
-  message: { mensaje: 'Demasiadas solicitudes de código. Espera una hora.' }
+  message: { mensaje: 'Demasiadas solicitudes de cÃ³digo. Espera una hora.' }
 });
 
 const server = http.createServer(app);
@@ -158,14 +159,14 @@ const io = new Server(server, {
   }
 });
 
-// Middleware Socket.io: verifica JWT si viene — permite conexiones sin token (escáner móvil)
+// Middleware Socket.io: verifica JWT si viene â€” permite conexiones sin token (escÃ¡ner mÃ³vil)
 io.use((socket, next) => {
   const token = socket.handshake.auth?.token;
   if (token) {
     try {
       socket.usuario = jwt.verify(token, process.env.JWT_SECRET);
     } catch {
-      // Token inválido — conectar sin usuario (el escáner no tiene sesión)
+      // Token invÃ¡lido â€” conectar sin usuario (el escÃ¡ner no tiene sesiÃ³n)
     }
   }
   next();
@@ -177,12 +178,12 @@ io.on("connection", (socket) => {
     socket.join(salaId);
   });
 
-  // El celular se une a la misma sala (no requiere auth — accede por QR)
+  // El celular se une a la misma sala (no requiere auth â€” accede por QR)
   socket.on("unirse-movil", (salaId) => {
     socket.join(salaId);
   });
 
-  // El celular emite "codigo-leido" — el backend lo reenvía a la sala
+  // El celular emite "codigo-leido" â€” el backend lo reenvÃ­a a la sala
   socket.on("codigo-leido", (data) => {
     const sala = data.salaId || data.cajaId;
     socket.to(sala).emit("codigo-leido", data.codigo);
@@ -198,7 +199,7 @@ io.on("connection", (socket) => {
   socket.on("disconnect", () => {});
 });
 
-// Cron: verificar stock bajo cada 30 min y notificar vía socket
+// Cron: verificar stock bajo cada 30 min y notificar vÃ­a socket
 cron.schedule('*/30 * * * *', async () => {
   try {
     const alertas = await sequelize.query(`
@@ -250,12 +251,12 @@ app.use("/api/superadmin",   verificarToken, verificarSuperAdmin, superadminRout
 
 app.get("/api", (req, res) => res.json({ mensaje: "Servidor arriba" }));
 
-// Error handler Sentry (debe ir antes del handler genérico)
+// Error handler Sentry (debe ir antes del handler genÃ©rico)
 if (process.env.SENTRY_DSN) {
   Sentry.setupExpressErrorHandler(app);
 }
 
-// Error handler genérico
+// Error handler genÃ©rico
 app.use((err, req, res, next) => {
   res.status(500).json({ error: "Error interno del servidor" });
 });
@@ -264,22 +265,22 @@ const PORT = process.env.PORT || 3000;
 
 try {
   await sequelize.authenticate();
-  console.log("🔌 Conexión a PostgreSQL correcta.");
+  console.log("ðŸ”Œ ConexiÃ³n a PostgreSQL correcta.");
   await sequelize.sync({ alter: process.env.NODE_ENV !== "production" });
-  console.log("📦 Modelos sincronizados.");
+  console.log("ðŸ“¦ Modelos sincronizados.");
   // Columnas opcionales que pueden haber quedado NOT NULL en BD antigua
   await sequelize.query("ALTER TABLE IF EXISTS sucursales ALTER COLUMN cp_sat DROP NOT NULL").catch(() => {});
   await sequelize.query("ALTER TABLE IF EXISTS sucursales ALTER COLUMN direccion DROP NOT NULL").catch(() => {});
   server.listen(PORT, () => {
-    console.log(`🚀 Servidor corriendo en: http://localhost:${PORT}`);
-    // Backup automático diario a las 3 AM
+    console.log(`ðŸš€ Servidor corriendo en: http://localhost:${PORT}`);
+    // Backup automÃ¡tico diario a las 3 AM
     cron.schedule('0 3 * * *', () => {
-      console.log('⏰ Iniciando backup automático...');
-      realizarBackup();
+      console.log('â° Iniciando backup automÃ¡tico...');
+      realizarBackup().catch(err => console.error("Backup automatico fallido:", err.message));
     });
-    console.log('🗄️  Backup automático programado — todos los días a las 3:00 AM');
+    console.log('ðŸ—„ï¸  Backup automÃ¡tico programado â€” todos los dÃ­as a las 3:00 AM');
   });
 } catch (err) {
-  console.error("❌ Error al iniciar:", err);
+  console.error("âŒ Error al iniciar:", err);
   process.exit(1);
 }

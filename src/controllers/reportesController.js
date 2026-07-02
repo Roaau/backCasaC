@@ -1,4 +1,4 @@
-import sequelize from '../config/database.js';
+﻿import sequelize from '../config/database.js';
 import { QueryTypes } from 'sequelize';
 import { filtroEmpresa } from '../utils/filtros.js';
 import { rangoFechasReporte } from '../utils/fechas.js';
@@ -18,6 +18,11 @@ export const getReporteVentas = async (req, res) => {
                 v.total,
                 v.tipo_venta,
                 v.pedido_numero,
+                v.nombre_cliente,
+                v.telefono_cliente,
+                v.direccion_entrega,
+                v.referencia_entrega,
+                v.estado_pedido,
                 u.nombre as nombre_cajero,
                 s.nombre as nombre_sucursal
             FROM "ventas" v
@@ -107,9 +112,9 @@ export const getReporteCaja = async (req, res) => {
                 c.monto_final,
                 (c.monto_final - (
                     c.monto_inicial +
-                    (SELECT COALESCE(SUM(total),0) FROM "ventas" WHERE fecha BETWEEN c.fecha_apertura AND c.fecha_cierre AND sucursal_id = c.sucursal_id) -
+                    (SELECT COALESCE(SUM(total),0) FROM "ventas" WHERE fecha BETWEEN c.fecha_apertura AND c.fecha_cierre AND sucursal_id = c.sucursal_id AND COALESCE(tipo_pago, 'efectivo') = 'efectivo') -
                     (SELECT COALESCE(SUM(monto),0) FROM "movimiento_caja" WHERE caja_id = c.caja_id AND tipo_movimiento = 'EGRESO')
-                )) as diferencia_calculada,
+                )) as diferencia,
                 u1.nombre as abrio,
                 u2.nombre as cerro,
                 s.nombre  as nombre_sucursal
@@ -233,7 +238,7 @@ export const getDatosGraficas = async (req, res) => {
         res.json({ topProductos, tendenciaVentas });
 
     } catch (error) {
-        res.status(500).json({ error: "Error al generar gráficas" });
+        res.status(500).json({ error: "Error al generar grÃ¡ficas" });
     }
 };
 
@@ -254,7 +259,8 @@ export const exportarExcel = async (req, res) => {
             const { clausula, params } = filtroEmpresa(req.usuario, 'v.sucursal_id', 's', req.body);
             filas = await sequelize.query(`
                 SELECT v.folio, TO_CHAR(v.fecha, 'DD/MM/YYYY HH24:MI') as fecha,
-                    v.total, v.tipo_venta, u.nombre as cajero, s.nombre as sucursal
+                    v.total, v.tipo_venta, v.nombre_cliente, v.telefono_cliente, v.direccion_entrega, v.estado_pedido,
+                    u.nombre as cajero, s.nombre as sucursal
                 FROM "ventas" v
                 LEFT JOIN "usuarios" u ON v.usuario_id = u.usuario_id
                 LEFT JOIN "sucursales" s ON v.sucursal_id = s.sucursal_id
@@ -266,6 +272,10 @@ export const exportarExcel = async (req, res) => {
                 { header: 'Fecha',     key: 'fecha',       width: 18 },
                 { header: 'Total',     key: 'total',       width: 12 },
                 { header: 'Tipo',      key: 'tipo_venta',  width: 14 },
+                { header: 'Cliente',   key: 'nombre_cliente', width: 24 },
+                { header: 'Telefono',  key: 'telefono_cliente', width: 16 },
+                { header: 'Entrega',   key: 'direccion_entrega', width: 34 },
+                { header: 'Estado',    key: 'estado_pedido', width: 14 },
                 { header: 'Cajero',    key: 'cajero',      width: 20 },
                 { header: 'Sucursal',  key: 'sucursal',    width: 20 }
             ];
@@ -284,7 +294,7 @@ export const exportarExcel = async (req, res) => {
                 ORDER BY cantidad_vendida DESC
             `, { replacements: { ...replacements, ...params }, type: QueryTypes.SELECT });
             columnas = [
-                { header: 'Código',          key: 'codigo_barras',    width: 16 },
+                { header: 'CÃ³digo',          key: 'codigo_barras',    width: 16 },
                 { header: 'Producto',        key: 'nombre_producto',  width: 30 },
                 { header: 'Cant. vendida',   key: 'cantidad_vendida', width: 14 },
                 { header: 'Dinero generado', key: 'dinero_generado',  width: 16 }
@@ -310,8 +320,8 @@ export const exportarExcel = async (req, res) => {
                 { header: 'Cierre',        key: 'cierre',        width: 18 },
                 { header: 'Monto inicial', key: 'monto_inicial', width: 14 },
                 { header: 'Monto final',   key: 'monto_final',   width: 14 },
-                { header: 'Abrió',         key: 'abrio',         width: 20 },
-                { header: 'Cerró',         key: 'cerro',         width: 20 },
+                { header: 'AbriÃ³',         key: 'abrio',         width: 20 },
+                { header: 'CerrÃ³',         key: 'cerro',         width: 20 },
                 { header: 'Sucursal',      key: 'sucursal',      width: 20 }
             ];
             hojaNombre = 'Caja';
@@ -334,14 +344,14 @@ export const exportarExcel = async (req, res) => {
                 { header: 'Tipo',       key: 'tipo_movimiento',  width: 12 },
                 { header: 'Cantidad',   key: 'cantidad',         width: 10 },
                 { header: 'Producto',   key: 'nombre_producto',  width: 30 },
-                { header: 'Código',     key: 'codigo_barras',    width: 16 },
+                { header: 'CÃ³digo',     key: 'codigo_barras',    width: 16 },
                 { header: 'Nota',       key: 'observaciones',    width: 25 },
                 { header: 'Usuario',    key: 'usuario',          width: 20 },
                 { header: 'Sucursal',   key: 'sucursal',         width: 20 }
             ];
             hojaNombre = 'Inventario';
         } else {
-            return res.status(400).json({ error: 'Tipo de reporte no válido' });
+            return res.status(400).json({ error: 'Tipo de reporte no vÃ¡lido' });
         }
 
         const workbook = new ExcelJS.Workbook();
@@ -379,3 +389,6 @@ export const exportarExcel = async (req, res) => {
         res.status(500).json({ error: 'Error al exportar Excel: ' + error.message });
     }
 };
+
+
+

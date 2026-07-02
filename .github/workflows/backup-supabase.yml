@@ -1,0 +1,35 @@
+﻿name: Backup Supabase Database
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '15 9 * * *'
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Install PostgreSQL client
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client
+
+      - name: Create backup
+        env:
+          DATABASE_URL: ${{ secrets.SUPABASE_DATABASE_URL }}
+        run: |
+          if [ -z "$DATABASE_URL" ]; then
+            echo "Missing SUPABASE_DATABASE_URL secret"
+            exit 1
+          fi
+          mkdir -p backups
+          TS=$(date -u +'%Y-%m-%d_%H-%M-%S')
+          pg_dump "$DATABASE_URL" --no-owner --no-privileges -f "backups/supabase-$TS.sql"
+
+      - name: Upload backup artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: supabase-backup-${{ github.run_id }}
+          path: backups/*.sql
+          retention-days: 14
