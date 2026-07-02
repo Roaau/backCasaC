@@ -42,7 +42,7 @@ export async function generarNotificacionesEmpresa(req, scope) {
   const sucursalIds = scope.sucursalIds?.length ? scope.sucursalIds : [scope.sucursal_id].filter(Boolean);
   if (!empresaId || sucursalIds.length === 0) return;
 
-  const stockRows = await sequelize.query(
+  const stockRows = await sequelize.query(`
     SELECT p.producto_id, p.nombre, COALESCE(ss.stock_actual, p.stock_actual, 0) AS stock_actual,
            COALESCE(ss.stock_minimo, p.stock_minimo, 5) AS stock_minimo,
            s.sucursal_id, s.nombre AS sucursal
@@ -55,7 +55,7 @@ export async function generarNotificacionesEmpresa(req, scope) {
       AND COALESCE(ss.stock_actual, p.stock_actual, 0) <= COALESCE(NULLIF(ss.stock_minimo, 0), NULLIF(p.stock_minimo, 0), 5)
     ORDER BY COALESCE(ss.stock_actual, p.stock_actual, 0) ASC
     LIMIT 40
-  , { replacements: { empresa_id: empresaId, sucursalIds }, type: QueryTypes.SELECT });
+  `, { replacements: { empresa_id: empresaId, sucursalIds }, type: QueryTypes.SELECT });
 
   for (const p of stockRows) {
     const severidad = severidadStock(p.stock_actual, p.stock_minimo);
@@ -65,14 +65,14 @@ export async function generarNotificacionesEmpresa(req, scope) {
       tipo: 'stock_bajo',
       severidad,
       titulo: severidad === 'critica' ? 'Stock critico' : 'Stock bajo',
-      mensaje: ${p.nombre} tiene  unidades en . Minimo: .,
+      mensaje: `${p.nombre} tiene ${p.stock_actual} unidades en ${p.sucursal}. Minimo: ${p.stock_minimo}.`,
       entidad: 'producto',
       entidad_id: String(p.producto_id),
       detalle: { producto: p.nombre, stock_actual: Number(p.stock_actual), stock_minimo: Number(p.stock_minimo), sucursal: p.sucursal }
     });
   }
 
-  const pedidosRows = await sequelize.query(
+  const pedidosRows = await sequelize.query(`
     SELECT v.venta_id, v.folio, v.sucursal_id, s.nombre AS sucursal, v.estado_pedido,
            v.nombre_cliente, v.telefono_cliente, v.direccion_entrega, v.fecha
     FROM ventas v
@@ -83,7 +83,7 @@ export async function generarNotificacionesEmpresa(req, scope) {
       AND COALESCE(v.estado_pedido, 'PENDIENTE') IN ('PENDIENTE', 'ENVIADO')
     ORDER BY v.fecha ASC
     LIMIT 40
-  , { replacements: { empresa_id: empresaId, sucursalIds }, type: QueryTypes.SELECT });
+  `, { replacements: { empresa_id: empresaId, sucursalIds }, type: QueryTypes.SELECT });
 
   for (const p of pedidosRows) {
     const faltanDatos = !p.nombre_cliente || !p.telefono_cliente || !p.direccion_entrega;
@@ -93,14 +93,14 @@ export async function generarNotificacionesEmpresa(req, scope) {
       tipo: faltanDatos ? 'pedido_incompleto' : 'pedido_pendiente',
       severidad: faltanDatos ? 'alta' : 'media',
       titulo: faltanDatos ? 'Pedido con datos incompletos' : 'Pedido pendiente',
-      mensaje: ${p.folio} esta  en ,
+      mensaje: `${p.folio} esta ${p.estado_pedido || 'PENDIENTE'} en ${p.sucursal}.`,
       entidad: 'venta',
       entidad_id: String(p.venta_id),
       detalle: { folio: p.folio, estado: p.estado_pedido || 'PENDIENTE', sucursal: p.sucursal, datos_incompletos: faltanDatos }
     });
   }
 
-  const cajasRows = await sequelize.query(
+  const cajasRows = await sequelize.query(`
     SELECT c.caja_id, c.sucursal_id, s.nombre AS sucursal, c.fecha_apertura
     FROM caja c
     JOIN sucursales s ON s.sucursal_id = c.sucursal_id
@@ -108,7 +108,7 @@ export async function generarNotificacionesEmpresa(req, scope) {
       AND c.sucursal_id IN (:sucursalIds)
       AND c.fecha_cierre IS NULL
       AND c.fecha_apertura < (NOW() - INTERVAL '18 hours')
-  , { replacements: { empresa_id: empresaId, sucursalIds }, type: QueryTypes.SELECT });
+  `, { replacements: { empresa_id: empresaId, sucursalIds }, type: QueryTypes.SELECT });
 
   for (const c of cajasRows) {
     await upsertNotificacion({
@@ -117,7 +117,7 @@ export async function generarNotificacionesEmpresa(req, scope) {
       tipo: 'caja_abierta',
       severidad: 'alta',
       titulo: 'Caja abierta mucho tiempo',
-      mensaje: La caja de  sigue abierta desde hace varias horas. Conviene revisar el cierre.,
+      mensaje: `La caja de ${c.sucursal} sigue abierta desde hace varias horas. Conviene revisar el cierre.`,
       entidad: 'caja',
       entidad_id: String(c.caja_id),
       detalle: { sucursal: c.sucursal, fecha_apertura: c.fecha_apertura }
@@ -137,7 +137,7 @@ export const listarNotificaciones = async (req, res) => {
         estado: { [Op.in]: estados }
       },
       order: [
-        [sequelize.literal(CASE severidad WHEN 'critica' THEN 1 WHEN 'alta' THEN 2 WHEN 'media' THEN 3 ELSE 4 END), 'ASC'],
+        [sequelize.literal(`CASE severidad WHEN 'critica' THEN 1 WHEN 'alta' THEN 2 WHEN 'media' THEN 3 ELSE 4 END`), 'ASC'],
         ['creada_en', 'DESC']
       ],
       limit: Math.min(Number(req.query.limit) || 80, 150)
