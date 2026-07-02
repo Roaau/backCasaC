@@ -8,6 +8,10 @@ import Notificacion from "../models/Notificacion.js";
 
 const GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models";
 const DEFAULT_MODEL = process.env.GEMINI_MODEL || "gemini-2.5-flash-lite";
+const GEMINI_MODELS = Array.from(new Set([
+  DEFAULT_MODEL,
+  ...(process.env.GEMINI_FALLBACK_MODELS || "gemini-2.0-flash-lite,gemini-1.5-flash").split(",")
+].map(m => m.trim()).filter(Boolean)));
 const DAILY_LIMIT = Number(process.env.IA_DAILY_LIMIT || 25);
 const CACHE_TTL_MS = Number(process.env.IA_CACHE_TTL_MS || 10 * 60 * 1000);
 const usage = new Map();
@@ -53,6 +57,14 @@ function cacheSet(key, value) {
   cache.set(key, { value, createdAt: Date.now() });
 }
 
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function esErrorTemporalGemini(status) {
+  return status === 429 || status === 500 || status === 502 || status === 503 || status === 504;
+}
+
 async function llamarGemini({ system, prompt, maxTokens = 900 }) {
   const apiKey = geminiKey();
   if (!apiKey) {
@@ -61,33 +73,44 @@ async function llamarGemini({ system, prompt, maxTokens = 900 }) {
     throw err;
   }
 
-  const response = await fetch(`${GEMINI_URL}/${DEFAULT_MODEL}:generateContent?key=${apiKey}`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      systemInstruction: { parts: [{ text: system }] },
-      contents: [{ role: "user", parts: [{ text: prompt }] }],
-      generationConfig: {
-        temperature: 0.25,
-        maxOutputTokens: maxTokens,
-        responseMimeType: "text/plain"
-      }
-    })
-  });
+  let ultimoError = null;
+  for (const model of GEMINI_MODELS) {
+    for (let intento = 0; intento < 2; intento += 1) {
+      const response = await fetch(`${GEMINI_URL}/${model}:generateContent?key=${apiKey}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          systemInstruction: { parts: [{ text: system }] },
+          contents: [{ role: "user", parts: [{ text: prompt }] }],
+          generationConfig: {
+            temperature: 0.25,
+            maxOutputTokens: maxTokens,
+            responseMimeType: "text/plain"
+          }
+        })
+      });
 
-  if (!response.ok) {
-    const text = await response.text();
-    const err = new Error(`Error Gemini: ${text.slice(0, 300)}`);
-    err.status = response.status;
-    throw err;
+      if (response.ok) {
+        const data = await response.json();
+        const texto = data?.candidates?.[0]?.content?.parts?.map(p => p.text || "").join("\n").trim();
+        if (texto) return texto;
+        ultimoError = new Error("Gemini no devolvio texto.");
+        ultimoError.status = 502;
+        break;
+      }
+
+      const text = await response.text();
+      ultimoError = new Error(`Gemini no esta disponible temporalmente (${response.status}).`);
+      ultimoError.status = response.status;
+      ultimoError.detalle = text.slice(0, 300);
+
+      if (!esErrorTemporalGemini(response.status)) throw ultimoError;
+      await sleep(450 * (intento + 1));
+    }
   }
 
-  const data = await response.json();
-  const texto = data?.candidates?.[0]?.content?.parts?.map(p => p.text || "").join("\n").trim();
-  if (!texto) throw new Error("Gemini no devolvio texto.");
-  return texto;
+  throw ultimoError || new Error("Gemini no esta disponible temporalmente.");
 }
-
 function scopePayload(scope) {
   return scope.todas ? { todas_sucursales: true } : { sucursal_id: scope.sucursal_id };
 }
@@ -199,6 +222,62 @@ Entrega: resumen breve, puntos importantes y una accion recomendada para hoy.`;
   return { system, prompt };
 }
 
+function dinero(valor) {
+  return `$${Number(valor || 0).toFixed(2)}`;
+}
+
+function fallbackIA(tipo, payload) {
+  const bullets = [];
+  const ventas = payload.ventas;
+  const cortes = payload.cortes || payload.caja;
+  const pedidos = payload.pedidos || [];
+  const stock = payload.stock_bajo || payload.productos_stock_bajo || [];
+  const notificaciones = payload.notificaciones || [];
+  const auditoria = payload.auditoria || [];
+
+  bullets.push("- Gemini esta saturado temporalmente; se muestra un resumen automatico con los datos disponibles.");
+
+  if (ventas) {
+    bullets.push(`- Ventas del periodo: ${ventas.ventas || 0} operaciones por ${dinero(ventas.total)}.`);
+    bullets.push(`- Formas de pago: efectivo ${dinero(ventas.efectivo)}, tarjeta ${dinero(ventas.tarjeta)}.`);
+    if (Number(ventas.pedidos || 0) > 0) bullets.push(`- Pedidos registrados en el periodo: ${ventas.pedidos}.`);
+  }
+
+  if (Array.isArray(payload.ventas_por_sucursal) && payload.ventas_por_sucursal.length) {
+    const top = payload.ventas_por_sucursal[0];
+    bullets.push(`- Sucursal con mayor venta: ${top.sucursal} con ${dinero(top.total)}.`);
+  }
+
+  if (Array.isArray(stock) && stock.length) {
+    bullets.push(`- Inventario: ${stock.length} producto(s) estan en minimo o bajo minimo; conviene revisar reabasto.`);
+    const primero = stock[0];
+    bullets.push(`- Prioridad de stock: ${primero.nombre} en ${primero.sucursal || 'sucursal seleccionada'} (${primero.stock_actual}/${primero.stock_minimo}).`);
+  }
+
+  if (Array.isArray(pedidos) && pedidos.length) {
+    const incompletos = pedidos.filter(p => p.datos_incompletos).length;
+    bullets.push(`- Pedidos pendientes revisados: ${pedidos.length}; incompletos: ${incompletos}.`);
+  }
+
+  if (Array.isArray(cortes) && cortes.length) {
+    const abiertos = cortes.filter(c => !c.fecha_cierre).length;
+    bullets.push(`- Caja: ${cortes.length} corte(s) revisado(s); cajas abiertas: ${abiertos}.`);
+  }
+
+  if (Array.isArray(notificaciones) && notificaciones.length) {
+    const criticas = notificaciones.filter(n => n.severidad === 'critica' || n.severidad === 'alta').length;
+    bullets.push(`- Notificaciones activas: ${notificaciones.length}; urgentes: ${criticas}.`);
+    bullets.push(`- Mas urgente: ${notificaciones[0].titulo}.`);
+  }
+
+  if (Array.isArray(auditoria) && auditoria.length) {
+    bullets.push(`- Auditoria: ${auditoria.length} tipo(s) de movimiento detectados en el periodo.`);
+  }
+
+  bullets.push("- Accion recomendada: atiende primero alertas criticas, pedidos incompletos y diferencias de caja antes de cerrar el dia.");
+  return bullets.slice(0, 7).join("\n");
+}
+
 async function responderIA(req, res, tipo, payloadBuilder, maxTokens = 900) {
   try {
     const scope = await resolverScopeSucursales(req);
@@ -207,22 +286,35 @@ async function responderIA(req, res, tipo, payloadBuilder, maxTokens = 900) {
     const cacheKey = JSON.stringify({ tipo, empresa: scope.empresa_id, sucursales: scope.sucursalIds, fechaInicio, fechaFin, body: req.body });
     const cached = cacheGet(cacheKey);
     if (cached) return res.json({ texto: cached, cache: true, limite_diario: DAILY_LIMIT });
+
     checkLimit(req);
     const payload = await payloadBuilder(scope, fechaInicio, fechaFin);
     const { system, prompt } = buildPrompt(tipo, payload);
-    const texto = await llamarGemini({ system, prompt, maxTokens });
-    cacheSet(cacheKey, texto);
-    await registrarAuditoria(req, {
-      accion: "IA_CONSULTA",
-      entidad: "ia",
-      detalle: { tipo, fechaInicio, fechaFin, todas_sucursales: scope.todas, sucursales: scope.sucursalIds.length }
-    });
-    res.json({ texto, cache: false, limite_diario: DAILY_LIMIT });
+
+    try {
+      const texto = await llamarGemini({ system, prompt, maxTokens });
+      cacheSet(cacheKey, texto);
+      await registrarAuditoria(req, {
+        accion: "IA_CONSULTA",
+        entidad: "ia",
+        detalle: { tipo, fechaInicio, fechaFin, todas_sucursales: scope.todas, sucursales: scope.sucursalIds.length }
+      });
+      return res.json({ texto, cache: false, fallback: false, limite_diario: DAILY_LIMIT });
+    } catch (geminiErr) {
+      if (!esErrorTemporalGemini(geminiErr.status)) throw geminiErr;
+      const texto = fallbackIA(tipo, payload);
+      cacheSet(cacheKey, texto);
+      await registrarAuditoria(req, {
+        accion: "IA_FALLBACK",
+        entidad: "ia",
+        detalle: { tipo, status: geminiErr.status, fechaInicio, fechaFin, todas_sucursales: scope.todas, sucursales: scope.sucursalIds.length }
+      });
+      return res.json({ texto, cache: false, fallback: true, aviso: "Gemini esta saturado temporalmente; se uso resumen automatico.", limite_diario: DAILY_LIMIT });
+    }
   } catch (err) {
     res.status(err.status || 500).json({ error: err.message });
   }
 }
-
 export const getStatus = (req, res) => {
   res.json({ tieneKey: tieneGeminiKey(), provider: "gemini", model: DEFAULT_MODEL, limite_diario: DAILY_LIMIT });
 };
