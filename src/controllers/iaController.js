@@ -7,10 +7,10 @@ import { generarNotificacionesEmpresa } from "./notificacionesController.js";
 import Notificacion from "../models/Notificacion.js";
 
 const GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models";
-const DEFAULT_MODEL = process.env.GEMINI_MODEL || "gemini-2.5-flash-lite";
+const DEFAULT_MODEL = process.env.GEMINI_MODEL || "gemini-3.1-flash-lite";
 const GEMINI_MODELS = Array.from(new Set([
   DEFAULT_MODEL,
-  ...(process.env.GEMINI_FALLBACK_MODELS || "gemini-2.0-flash-lite,gemini-1.5-flash").split(",")
+  ...(process.env.GEMINI_FALLBACK_MODELS || "gemini-3.5-flash,gemini-2.5-flash-lite,gemini-2.5-flash").split(",")
 ].map(m => m.trim()).filter(Boolean)));
 const DAILY_LIMIT = Number(process.env.IA_DAILY_LIMIT || 25);
 const CACHE_TTL_MS = Number(process.env.IA_CACHE_TTL_MS || 10 * 60 * 1000);
@@ -62,7 +62,7 @@ function sleep(ms) {
 }
 
 function esErrorTemporalGemini(status) {
-  return status === 429 || status === 500 || status === 502 || status === 503 || status === 504;
+  return status === 404 || status === 429 || status === 500 || status === 502 || status === 503 || status === 504;
 }
 
 async function llamarGemini({ system, prompt, maxTokens = 900 }) {
