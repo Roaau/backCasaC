@@ -49,6 +49,7 @@ import iaRoutes from "./routes/iaRoutes.js";
 import superadminRoutes from "./routes/superadminRoutes.js";
 import cotizacionesRoutes from "./routes/cotizacionesRoutes.js";
 import onboardingRoutes from "./routes/onboardingRoutes.js";
+import notificacionesRoutes from "./routes/notificacionesRoutes.js";
 import cron from "node-cron";
 import { realizarBackup } from "./backup.js";
 
@@ -81,6 +82,7 @@ import "./models/PagoCredito.js";
 import "./models/Cotizacion.js";
 import "./models/DetalleCotizacion.js";
 import "./models/Auditoria.js";
+import "./models/Notificacion.js";
 import Empresa from "./models/EmpresaModel.js";
 import Sucursal from "./models/SucursalModel.js";
 import Producto from "./models/Producto.js";
@@ -247,6 +249,7 @@ app.use("/api/devoluciones", verificarToken, devolucionRoutes);
 app.use("/api/ia",           verificarToken, iaRoutes);
 app.use("/api/cotizaciones", verificarToken, cotizacionesRoutes);
 app.use("/api/onboarding",  verificarToken, onboardingRoutes);
+app.use("/api/notificaciones", verificarToken, notificacionesRoutes);
 app.use("/api/superadmin",   verificarToken, verificarSuperAdmin, superadminRoutes);
 
 app.get("/api", (req, res) => res.json({ mensaje: "Servidor arriba" }));
@@ -284,3 +287,4 @@ try {
   console.error("âŒ Error al iniciar:", err);
   process.exit(1);
 }
+
