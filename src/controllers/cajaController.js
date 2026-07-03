@@ -1,4 +1,4 @@
-﻿import sequelize from '../config/database.js';
+import sequelize from '../config/database.js';
 import { QueryTypes, Op } from 'sequelize';
 import Caja from '../models/CajaModel.js';
 import MovimientoCaja from '../models/MovimientoCaja.js';
@@ -143,6 +143,21 @@ export const cerrarCaja = async (req, res) => {
     const montoFinalDb = sanitize(req.body.montoFinal ?? req.body.monto_final);
     const diferenciaDb = sanitize(req.body.diferencia);
     const motivoCierre = req.body.motivo || req.body.concepto || null;
+    const checklist = req.body.checklist || {};
+    const checklistCompleto = checklist.efectivo_contado === true
+      && checklist.movimientos_revisados === true
+      && checklist.facturas_revisadas === true;
+
+    if (!checklistCompleto) {
+      const error = new Error('Checklist de cierre incompleto');
+      error.status = 400;
+      throw error;
+    }
+    if (Math.abs(diferenciaDb) > 0.009 && !String(motivoCierre || '').trim()) {
+      const error = new Error('Agrega una observacion para explicar la diferencia de caja');
+      error.status = 400;
+      throw error;
+    }
 
     if (!idCaja || idUsuario === undefined) throw new Error(`Datos faltantes. Caja: ${idCaja}, Usuario: ${idUsuario}`);
 
@@ -174,7 +189,7 @@ export const cerrarCaja = async (req, res) => {
       entidad: "caja",
       entidad_id: Number(idCaja),
       sucursal_id: caja.sucursal_id,
-      detalle: { monto_final: montoFinalDb, diferencia: diferenciaDb },
+      detalle: { monto_final: montoFinalDb, diferencia: diferenciaDb, motivo: motivoCierre, checklist },
       transaction: t
     });
 

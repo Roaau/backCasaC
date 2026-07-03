@@ -146,3 +146,48 @@ describe('Seguridad multisucursal - filtros SQL', () => {
     expect(filtro.params).toEqual({ sucursal_id: 2, empresa_id: 10 });
   });
 });
+
+describe('Seguridad multisucursal - regresiones de endpoints', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  test('empleado con todas_sucursales=true en query sigue rechazado', async () => {
+    await expect(resolverScopeSucursales({
+      body: {},
+      query: { todas_sucursales: 'true' },
+      usuario: { id: 11, rol: 2, empresa_id: 30, sucursal_id: 7 }
+    })).rejects.toMatchObject({
+      status: 403,
+      message: 'Solo el administrador puede consultar todas sus sucursales'
+    });
+  });
+
+  test('empleado sin sucursal solicitada opera solo su sucursal asignada', async () => {
+    Sucursal.findOne.mockResolvedValue({ sucursal_id: 7, empresa_id: 30 });
+
+    const sucursalId = await resolverSucursalOperativa({
+      body: {},
+      query: {},
+      usuario: { id: 11, rol: 2, empresa_id: 30, sucursal_id: 7 }
+    });
+
+    expect(sucursalId).toBe(7);
+    expect(Sucursal.findOne).toHaveBeenCalledWith(expect.objectContaining({
+      where: { sucursal_id: 7, empresa_id: 30, activa: true }
+    }));
+  });
+
+  test('filtro SQL ignora todas_sucursales de empleado aunque venga como string', () => {
+    const filtro = filtroEmpresa(
+      { id: 11, rol: 2, empresa_id: 30, sucursal_id: 7 },
+      'v.sucursal_id',
+      's',
+      { todas_sucursales: 'true', sucursal_id: 99 }
+    );
+
+    expect(filtro.clausula).toContain('v.sucursal_id = :sucursal_id');
+    expect(filtro.clausula).toContain('s.empresa_id = :empresa_id');
+    expect(filtro.params).toEqual({ sucursal_id: 7, empresa_id: 30 });
+  });
+});

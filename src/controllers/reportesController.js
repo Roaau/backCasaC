@@ -1,4 +1,4 @@
-﻿import sequelize from '../config/database.js';
+import sequelize from '../config/database.js';
 import { QueryTypes } from 'sequelize';
 import { filtroEmpresa } from '../utils/filtros.js';
 import { rangoFechasReporte } from '../utils/fechas.js';
@@ -17,6 +17,7 @@ export const getReporteVentas = async (req, res) => {
                 v.fecha,
                 v.total,
                 v.tipo_venta,
+                COALESCE(v.tipo_pago, 'efectivo') AS tipo_pago,
                 v.pedido_numero,
                 v.nombre_cliente,
                 v.telefono_cliente,
@@ -44,8 +45,12 @@ export const getReporteVentas = async (req, res) => {
 
         const totalDinero  = ventas.reduce((acc, curr) => acc + parseFloat(curr.total), 0);
         const conteoVentas = ventas.length;
+        const totalEfectivo = ventas.filter(v => (v.tipo_pago || 'efectivo') === 'efectivo').reduce((acc, curr) => acc + parseFloat(curr.total), 0);
+        const totalTarjeta = ventas.filter(v => (v.tipo_pago || 'efectivo') === 'tarjeta').reduce((acc, curr) => acc + parseFloat(curr.total), 0);
+        const totalPedidos = ventas.filter(v => v.tipo_venta === 'Pedido').length;
+        const ticketPromedio = conteoVentas > 0 ? totalDinero / conteoVentas : 0;
 
-        res.json({ datos: ventas, resumen: { totalDinero, conteoVentas } });
+        res.json({ datos: ventas, resumen: { totalDinero, conteoVentas, totalEfectivo, totalTarjeta, totalPedidos, ticketPromedio } });
 
     } catch (error) {
         res.status(500).json({ error: "Error al generar reporte de ventas" });
@@ -238,7 +243,7 @@ export const getDatosGraficas = async (req, res) => {
         res.json({ topProductos, tendenciaVentas });
 
     } catch (error) {
-        res.status(500).json({ error: "Error al generar grÃ¡ficas" });
+        res.status(500).json({ error: "Error al generar graficas" });
     }
 };
 
@@ -294,7 +299,7 @@ export const exportarExcel = async (req, res) => {
                 ORDER BY cantidad_vendida DESC
             `, { replacements: { ...replacements, ...params }, type: QueryTypes.SELECT });
             columnas = [
-                { header: 'CÃ³digo',          key: 'codigo_barras',    width: 16 },
+                { header: 'Codigo',          key: 'codigo_barras',    width: 16 },
                 { header: 'Producto',        key: 'nombre_producto',  width: 30 },
                 { header: 'Cant. vendida',   key: 'cantidad_vendida', width: 14 },
                 { header: 'Dinero generado', key: 'dinero_generado',  width: 16 }
@@ -320,8 +325,8 @@ export const exportarExcel = async (req, res) => {
                 { header: 'Cierre',        key: 'cierre',        width: 18 },
                 { header: 'Monto inicial', key: 'monto_inicial', width: 14 },
                 { header: 'Monto final',   key: 'monto_final',   width: 14 },
-                { header: 'AbriÃ³',         key: 'abrio',         width: 20 },
-                { header: 'CerrÃ³',         key: 'cerro',         width: 20 },
+                { header: 'Abrio',         key: 'abrio',         width: 20 },
+                { header: 'Cerro',         key: 'cerro',         width: 20 },
                 { header: 'Sucursal',      key: 'sucursal',      width: 20 }
             ];
             hojaNombre = 'Caja';
@@ -344,14 +349,14 @@ export const exportarExcel = async (req, res) => {
                 { header: 'Tipo',       key: 'tipo_movimiento',  width: 12 },
                 { header: 'Cantidad',   key: 'cantidad',         width: 10 },
                 { header: 'Producto',   key: 'nombre_producto',  width: 30 },
-                { header: 'CÃ³digo',     key: 'codigo_barras',    width: 16 },
+                { header: 'Codigo',     key: 'codigo_barras',    width: 16 },
                 { header: 'Nota',       key: 'observaciones',    width: 25 },
                 { header: 'Usuario',    key: 'usuario',          width: 20 },
                 { header: 'Sucursal',   key: 'sucursal',         width: 20 }
             ];
             hojaNombre = 'Inventario';
         } else {
-            return res.status(400).json({ error: 'Tipo de reporte no vÃ¡lido' });
+            return res.status(400).json({ error: 'Tipo de reporte no valido' });
         }
 
         const workbook = new ExcelJS.Workbook();

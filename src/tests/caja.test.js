@@ -1,6 +1,6 @@
 jest.mock('../models/CajaModel.js', () => ({
   __esModule: true,
-  default: { findOne: jest.fn(), create: jest.fn(), update: jest.fn() }
+  default: { findOne: jest.fn(), findByPk: jest.fn(), create: jest.fn(), update: jest.fn() }
 }));
 jest.mock('../models/MovimientoCaja.js', () => ({
   __esModule: true,
@@ -11,7 +11,11 @@ jest.mock('../models/SucursalModel.js', () => ({
   default: { findOne: jest.fn() }
 }));
 jest.mock('../config/database.js', () => ({
-  __esModule: true, default: { query: jest.fn() }
+  __esModule: true,
+  default: {
+    query: jest.fn(),
+    transaction: jest.fn(() => ({ commit: jest.fn(), rollback: jest.fn() }))
+  }
 }));
 jest.mock('../utils/auditoria.js', () => ({
   registrarAuditoria: jest.fn()
@@ -27,7 +31,7 @@ jest.mock('sequelize', () => ({
 
 const { default: Caja }         = require('../models/CajaModel.js');
 const { default: Sucursal }     = require('../models/SucursalModel.js');
-const { estadoCaja, abrirCaja } = require('../controllers/cajaController.js');
+const { estadoCaja, abrirCaja, cerrarCaja } = require('../controllers/cajaController.js');
 
 const mockRes = () => {
   const res = {};
@@ -36,7 +40,7 @@ const mockRes = () => {
   return res;
 };
 
-describe('Caja â€” estadoCaja()', () => {
+describe('Caja - estadoCaja()', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     Sucursal.findOne.mockResolvedValue({ sucursal_id: 1, empresa_id: 1 });
@@ -59,7 +63,7 @@ describe('Caja â€” estadoCaja()', () => {
   });
 });
 
-describe('Caja â€” abrirCaja()', () => {
+describe('Caja - abrirCaja()', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     Sucursal.findOne.mockResolvedValue({ sucursal_id: 1, empresa_id: 1 });
@@ -87,5 +91,50 @@ describe('Caja â€” abrirCaja()', () => {
     expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
       caja: expect.objectContaining({ caja_id: 10 })
     }));
+  });
+});
+
+describe('Caja - cerrarCaja()', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    Sucursal.findOne.mockResolvedValue({ sucursal_id: 1, empresa_id: 1 });
+  });
+
+  test('rechaza cierre con checklist incompleto', async () => {
+    const req = {
+      body: { caja_id: 10, usuario_cierre_id: 1, montoFinal: 500, diferencia: 0, checklist: { efectivo_contado: true } },
+      usuario: { empresa_id: 1, sucursal_id: 1, rol: 1, id: 1 }
+    };
+    const res = mockRes();
+
+    await cerrarCaja(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ error: 'Checklist de cierre incompleto' }));
+    expect(Caja.update).not.toHaveBeenCalled();
+  });
+
+  test('rechaza cierre con diferencia sin observacion', async () => {
+    const req = {
+      body: {
+        caja_id: 10,
+        usuario_cierre_id: 1,
+        montoFinal: 450,
+        diferencia: -50,
+        checklist: {
+          efectivo_contado: true,
+          movimientos_revisados: true,
+          facturas_revisadas: true
+        }
+      },
+      usuario: { empresa_id: 1, sucursal_id: 1, rol: 1, id: 1 }
+    };
+    const res = mockRes();
+
+    await cerrarCaja(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ error: 'Agrega una observacion para explicar la diferencia de caja' }));
+    expect(Caja.update).not.toHaveBeenCalled();
   });
 });
