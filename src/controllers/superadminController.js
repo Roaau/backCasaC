@@ -4,6 +4,7 @@ import Usuario from "../models/Usuario.js";
 import Venta from "../models/Venta.js";
 import MovimientoInventario from "../models/MovimientoInventario.js";
 import CatalogoMaestro from "../models/CatalogoMaestro.js";
+import Auditoria from "../models/Auditoria.js";
 import { notificarEmpresaAprobada, notificarEmpresaRechazada } from "../services/emailService.js";
 import { Op } from "sequelize";
 import sequelize from "../config/database.js";
@@ -280,6 +281,37 @@ export const actualizarNotas = async (req, res) => {
     res.json({ mensaje: 'Notas actualizadas' });
   } catch {
     res.status(500).json({ error: 'Error al actualizar notas' });
+  }
+};
+
+// GET /api/superadmin/auditoria
+export const listarAuditoriaSuperadmin = async (req, res) => {
+  try {
+    const empresaId = Number(req.query.empresa_id);
+    const limit = Math.min(Math.max(Number(req.query.limit) || 40, 1), 100);
+    const where = {};
+
+    if (Number.isInteger(empresaId) && empresaId > 0) {
+      where[Op.or] = [
+        { empresa_id: empresaId },
+        { detalle: { [Op.contains]: { empresa_id: empresaId } } }
+      ];
+    }
+
+    if (req.query.accion) {
+      where.accion = String(req.query.accion).trim();
+    }
+
+    const registros = await Auditoria.findAll({
+      where,
+      attributes: ['auditoria_id', 'usuario_id', 'empresa_id', 'sucursal_id', 'accion', 'entidad', 'entidad_id', 'detalle', 'ip', 'fecha'],
+      order: [['fecha', 'DESC']],
+      limit
+    });
+
+    res.json(registros.map(a => a.toJSON()));
+  } catch (err) {
+    res.status(500).json({ error: 'Error al obtener auditoria', detalle: err.message });
   }
 };
 

@@ -1,5 +1,5 @@
 jest.mock('sequelize', () => ({
-  Op: {},
+  Op: { or: 'OR', contains: 'CONTAINS' },
   QueryTypes: { SELECT: 'SELECT' }
 }));
 
@@ -38,6 +38,11 @@ jest.mock('../models/CatalogoMaestro.js', () => ({
   default: { count: jest.fn(), destroy: jest.fn(), bulkCreate: jest.fn() }
 }));
 
+jest.mock('../models/Auditoria.js', () => ({
+  __esModule: true,
+  default: { findAll: jest.fn() }
+}));
+
 jest.mock('../services/emailService.js', () => ({
   notificarEmpresaAprobada: jest.fn(),
   notificarEmpresaRechazada: jest.fn()
@@ -56,8 +61,9 @@ jest.mock('multer', () => {
 jest.mock('xlsx', () => ({ read: jest.fn(), utils: { sheet_to_json: jest.fn() } }));
 
 const { default: Empresa } = require('../models/EmpresaModel.js');
+const { default: Auditoria } = require('../models/Auditoria.js');
 const { registrarAuditoria } = require('../utils/auditoria.js');
-const { actualizarComercial } = require('../controllers/superadminController.js');
+const { actualizarComercial, listarAuditoriaSuperadmin } = require('../controllers/superadminController.js');
 
 const mockRes = () => {
   const res = {};
@@ -144,5 +150,41 @@ describe('Superadmin comercial', () => {
     expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
       mensaje: 'Configuracion comercial actualizada'
     }));
+  });
+
+  test('lista auditoria global reciente para superadmin', async () => {
+    Auditoria.findAll.mockResolvedValue([
+      { toJSON: () => ({ auditoria_id: 1, accion: 'SUPERADMIN_EMPRESA_COMERCIAL' }) }
+    ]);
+    const req = { query: {}, usuario: { id: 1, es_superadmin: true } };
+    const res = mockRes();
+
+    await listarAuditoriaSuperadmin(req, res);
+
+    expect(Auditoria.findAll).toHaveBeenCalledWith(expect.objectContaining({
+      where: {},
+      limit: 40,
+      order: [['fecha', 'DESC']]
+    }));
+    expect(res.json).toHaveBeenCalledWith([{ auditoria_id: 1, accion: 'SUPERADMIN_EMPRESA_COMERCIAL' }]);
+  });
+
+  test('filtra auditoria por empresa y limita resultados', async () => {
+    Auditoria.findAll.mockResolvedValue([]);
+    const req = { query: { empresa_id: '7', limit: '200' }, usuario: { id: 1, es_superadmin: true } };
+    const res = mockRes();
+
+    await listarAuditoriaSuperadmin(req, res);
+
+    expect(Auditoria.findAll).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({
+        OR: [
+          { empresa_id: 7 },
+          { detalle: { CONTAINS: { empresa_id: 7 } } }
+        ]
+      }),
+      limit: 100
+    }));
+    expect(res.json).toHaveBeenCalledWith([]);
   });
 });

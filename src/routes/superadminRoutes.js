@@ -13,6 +13,7 @@ import {
   statsCatalogo,
   importarCatalogo,
   limpiarCatalogo,
+  listarAuditoriaSuperadmin,
 } from '../controllers/superadminController.js';
 
 const router = Router();
@@ -27,6 +28,7 @@ router.put('/empresas/:id/notas',    actualizarNotas);
 router.put('/empresas/:id/comercial', actualizarComercial);
 router.put('/sucursales/:id/toggle', toggleSucursal);
 router.put('/usuarios/:id/toggle',   toggleUsuario);
+router.get('/auditoria',             listarAuditoriaSuperadmin);
 
 router.get('/catalogo/stats',     statsCatalogo);
 router.post('/catalogo/importar', importarCatalogo);
