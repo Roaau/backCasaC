@@ -1,4 +1,4 @@
-﻿import dotenv from "dotenv";
+import dotenv from "dotenv";
 dotenv.config({ override: true });
 import * as Sentry from "@sentry/node";
 
@@ -11,7 +11,7 @@ if (process.env.SENTRY_DSN) {
 }
 
 if (!process.env.JWT_SECRET) {
-  console.error("âŒ JWT_SECRET no estÃ¡ definido en .env â€” el servidor no puede iniciar de forma segura.");
+  console.error("JWT_SECRET no esta definido en .env; el servidor no puede iniciar de forma segura.");
   process.exit(1);
 }
 
@@ -24,7 +24,7 @@ import jwt from "jsonwebtoken";
 import { Server } from "socket.io";
 import sequelize from "./config/database.js";
 import { QueryTypes } from "sequelize";
-import { verificarToken, verificarSuperAdmin } from "./middleware/authMiddleware.js";
+import { verificarToken, verificarAdmin, verificarSuperAdmin } from "./middleware/authMiddleware.js";
 
 import cajaRoutes from "./routes/cajaRoutes.js";
 import authRoutes from "./routes/authRoutes.js";
@@ -101,18 +101,19 @@ Sucursal.hasMany(MovimientoInventario, { foreignKey: 'sucursal_id' });
 
 const app = express();
 app.set('trust proxy', 1);
-const allowedOrigins = process.env.FRONTEND_URL
-  ? process.env.FRONTEND_URL.split(',').map(o => o.trim())
-  : null;
+const allowedOrigins = (process.env.FRONTEND_URL || '')
+  .split(',')
+  .map(o => o.trim())
+  .filter(Boolean);
+const allowVercelPreview = process.env.ALLOW_VERCEL_PREVIEW !== 'false';
 
 app.use(helmet());
 app.use(cors({
   origin: (origin, callback) => {
     if (!origin) return callback(null, true);
-    if (!allowedOrigins) return callback(null, true);
     const allowed =
       allowedOrigins.includes(origin) ||
-      /^https:\/\/[a-z0-9-]+\.vercel\.app$/.test(origin) ||
+      (allowVercelPreview && /^https:\/\/[a-z0-9-]+\.vercel\.app$/.test(origin)) ||
       origin === 'http://localhost:4200';
     callback(allowed ? null : new Error('CORS'), allowed);
   },
@@ -128,7 +129,7 @@ app.use((req, res, next) => {
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-// Rate limiting â€” protecciÃ³n contra brute-force
+// Rate limiting - proteccion contra brute-force
 const loginLimit = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 30,
@@ -141,18 +142,24 @@ const otpLimit = rateLimit({
   max: 20,
   standardHeaders: true,
   legacyHeaders: false,
-  message: { mensaje: 'Demasiadas solicitudes de cÃ³digo. Espera una hora.' }
+  message: { mensaje: 'Demasiadas solicitudes de codigo. Espera una hora.' }
 });
 
+const apiLimit = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 600,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { mensaje: 'Demasiadas solicitudes. Espera unos minutos e intenta de nuevo.' }
+});
 const server = http.createServer(app);
 
 const io = new Server(server, {
   cors: {
     origin: (origin, callback) => {
       if (!origin) return callback(null, true);
-      if (!allowedOrigins) return callback(null, true);
       const ok = allowedOrigins.includes(origin)
-        || /^https:\/\/[a-z0-9-]+\.vercel\.app$/.test(origin)
+        || (allowVercelPreview && /^https:\/\/[a-z0-9-]+\.vercel\.app$/.test(origin))
         || origin === 'http://localhost:4200';
       callback(ok ? null : new Error('CORS socket'), ok);
     },
@@ -161,14 +168,14 @@ const io = new Server(server, {
   }
 });
 
-// Middleware Socket.io: verifica JWT si viene â€” permite conexiones sin token (escÃ¡ner mÃ³vil)
+// Middleware Socket.io: verifica JWT si viene; permite conexiones sin token para escaner movil
 io.use((socket, next) => {
   const token = socket.handshake.auth?.token;
   if (token) {
     try {
       socket.usuario = jwt.verify(token, process.env.JWT_SECRET);
     } catch {
-      // Token invÃ¡lido â€” conectar sin usuario (el escÃ¡ner no tiene sesiÃ³n)
+      // Token invalido: conectar sin usuario
     }
   }
   next();
@@ -180,12 +187,12 @@ io.on("connection", (socket) => {
     socket.join(salaId);
   });
 
-  // El celular se une a la misma sala (no requiere auth â€” accede por QR)
+  // El celular se une a la misma sala por QR
   socket.on("unirse-movil", (salaId) => {
     socket.join(salaId);
   });
 
-  // El celular emite "codigo-leido" â€” el backend lo reenvÃ­a a la sala
+  // El celular emite codigo-leido y el backend lo reenvia a la sala
   socket.on("codigo-leido", (data) => {
     const sala = data.salaId || data.cajaId;
     socket.to(sala).emit("codigo-leido", data.codigo);
@@ -201,7 +208,7 @@ io.on("connection", (socket) => {
   socket.on("disconnect", () => {});
 });
 
-// Cron: verificar stock bajo cada 30 min y notificar vÃ­a socket
+// Cron: verificar stock bajo cada 30 min y notificar via socket
 cron.schedule('*/30 * * * *', async () => {
   try {
     const alertas = await sequelize.query(`
@@ -223,6 +230,8 @@ cron.schedule('*/30 * * * *', async () => {
     }
   } catch (_) {}
 });
+app.get("/api/health", (req, res) => res.json({ ok: true, service: "inventario-api", time: new Date().toISOString() }));
+app.use("/api", apiLimit);
 app.use("/api/auth/login",               loginLimit);
 app.use("/api/auth/solicitar-registro", otpLimit);
 app.use("/api/auth/solicitar-reset",    otpLimit);
@@ -233,13 +242,13 @@ app.use("/api/productos", verificarToken, productosRoutes);
 app.use("/api/usuarios", verificarToken, usuariosRoutes);
 app.use("/api/ventas", verificarToken, ventasRoutes);
 app.use("/api/caja", verificarToken, cajaRoutes);
-app.use("/api/reportes", verificarToken, reportesRoutes);
+app.use("/api/reportes", verificarToken, verificarAdmin, reportesRoutes);
 app.use("/api/inventario", verificarToken, inventarioRoutes);
 app.use("/api/sat", verificarToken, satRoutes);
 app.use("/api/clientes-fiscales", verificarToken, clientesFiscalesRoutes);
-app.use("/api/cfdi", verificarToken, cfdiRoutes);
-app.use("/api/configuracion", verificarToken, configuracionRoutes);
-app.use("/api/empresas",     verificarToken, empresasRoutes);
+app.use("/api/cfdi", verificarToken, verificarAdmin, cfdiRoutes);
+app.use("/api/configuracion", verificarToken, verificarAdmin, configuracionRoutes);
+app.use("/api/empresas",     verificarToken, verificarAdmin, empresasRoutes);
 app.use("/api/sucursales",   verificarToken, sucursalesRoutes);
 app.use("/api/catalogo",     verificarToken, catalogoRoutes);
 app.use("/api/proveedores",  verificarToken, proveedoresRoutes);
@@ -254,12 +263,12 @@ app.use("/api/superadmin",   verificarToken, verificarSuperAdmin, superadminRout
 
 app.get("/api", (req, res) => res.json({ mensaje: "Servidor arriba" }));
 
-// Error handler Sentry (debe ir antes del handler genÃ©rico)
+// Error handler Sentry
 if (process.env.SENTRY_DSN) {
   Sentry.setupExpressErrorHandler(app);
 }
 
-// Error handler genÃ©rico
+// Error handler generico
 app.use((err, req, res, next) => {
   res.status(500).json({ error: "Error interno del servidor" });
 });
@@ -268,23 +277,23 @@ const PORT = process.env.PORT || 3000;
 
 try {
   await sequelize.authenticate();
-  console.log("ðŸ”Œ ConexiÃ³n a PostgreSQL correcta.");
+  console.log("Conexion a PostgreSQL correcta.");
   await sequelize.sync({ alter: process.env.NODE_ENV !== "production" });
-  console.log("ðŸ“¦ Modelos sincronizados.");
+  console.log("Modelos sincronizados.");
   // Columnas opcionales que pueden haber quedado NOT NULL en BD antigua
   await sequelize.query("ALTER TABLE IF EXISTS sucursales ALTER COLUMN cp_sat DROP NOT NULL").catch(() => {});
   await sequelize.query("ALTER TABLE IF EXISTS sucursales ALTER COLUMN direccion DROP NOT NULL").catch(() => {});
   server.listen(PORT, () => {
-    console.log(`ðŸš€ Servidor corriendo en: http://localhost:${PORT}`);
-    // Backup automÃ¡tico diario a las 3 AM
+    console.log(`Servidor corriendo en: http://localhost:${PORT}`);
+    // Backup automatico diario a las 3 AM
     cron.schedule('0 3 * * *', () => {
-      console.log('â° Iniciando backup automÃ¡tico...');
+      console.log('Iniciando backup automatico...');
       realizarBackup().catch(err => console.error("Backup automatico fallido:", err.message));
     });
-    console.log('ðŸ—„ï¸  Backup automÃ¡tico programado â€” todos los dÃ­as a las 3:00 AM');
+    console.log('Backup automatico programado todos los dias a las 3:00 AM');
   });
 } catch (err) {
-  console.error("âŒ Error al iniciar:", err);
+  console.error("Error al iniciar:", err);
   process.exit(1);
 }
 

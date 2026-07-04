@@ -1,10 +1,17 @@
 import sequelize from '../config/database.js';
-import { QueryTypes, Op } from 'sequelize';
+import { QueryTypes } from 'sequelize';
 import Caja from '../models/CajaModel.js';
 import MovimientoCaja from '../models/MovimientoCaja.js';
 import { resolverSucursalOperativa, responderErrorScope, validarSucursalEmpresa } from '../utils/scope.js';
 import { registrarAuditoria } from '../utils/auditoria.js';
 
+function esCajaDeHoy(caja) {
+  const fecha = new Date(caja.fecha_apertura);
+  const hoy = new Date();
+  return fecha.getFullYear() === hoy.getFullYear()
+    && fecha.getMonth() === hoy.getMonth()
+    && fecha.getDate() === hoy.getDate();
+}
 async function calcularTotalesCaja(caja) {
   const cajaId = Number(caja.caja_id);
   const montoInicial = parseFloat(caja.monto_inicial) || 0;
@@ -31,18 +38,21 @@ async function calcularTotalesCaja(caja) {
 export const estadoCaja = async (req, res) => {
   try {
     const sucursal_id = await resolverSucursalOperativa(req);
-    const inicioDia = new Date(); inicioDia.setHours(0, 0, 0, 0);
-    const finDia    = new Date(); finDia.setHours(23, 59, 59, 999);
-
-    const cajaHoy = await Caja.findOne({
-      where: {
-        fecha_cierre: null,
-        sucursal_id,
-        fecha_apertura: { [Op.between]: [inicioDia, finDia] }
-      }
+    const cajaAbierta = await Caja.findOne({
+      where: { fecha_cierre: null, sucursal_id },
+      order: [['fecha_apertura', 'DESC']]
     });
-    if (cajaHoy) return res.json({ abierta: true, datos: cajaHoy });
-    return res.json({ abierta: false });
+
+    if (!cajaAbierta) return res.json({ abierta: false });
+
+    const pendienteCierre = !esCajaDeHoy(cajaAbierta);
+    return res.json({
+      abierta: true,
+      pendiente_cierre: pendienteCierre,
+      requiere_cierre: pendienteCierre,
+      mensaje: pendienteCierre ? 'Hay una caja abierta de un dia anterior. Debe cerrarse antes de vender.' : undefined,
+      datos: cajaAbierta
+    });
   } catch (err) {
     return responderErrorScope(res, err);
   }
@@ -59,11 +69,14 @@ export const abrirCaja = async (req, res) => {
 
     const cajaAbierta = await Caja.findOne({ where: { fecha_cierre: null, sucursal_id } });
     if (cajaAbierta) {
-      const fechaCaja = new Date(cajaAbierta.fecha_apertura).toDateString();
-      if (fechaCaja === new Date().toDateString()) {
+      if (esCajaDeHoy(cajaAbierta)) {
         return res.status(400).json({ error: 'Ya existe una caja abierta hoy.' });
       }
-      await cajaAbierta.update({ fecha_cierre: new Date(), monto_final: 0, usuario_cierre_id: usuario_id });
+      return res.status(409).json({
+        error: 'Hay una caja abierta de un dia anterior. Cierrala en Corte de caja antes de abrir otra.',
+        requiere_cierre: true,
+        caja: cajaAbierta
+      });
     }
 
     const nuevaCaja = await Caja.create({
@@ -99,6 +112,7 @@ export const registrarMovimiento = async (req, res) => {
     const sucursal_id = await resolverSucursalOperativa(req);
     const caja = await Caja.findOne({ where: { caja_id, fecha_cierre: null, sucursal_id } });
     if (!caja) return res.status(400).json({ error: 'Caja cerrada o no pertenece a esta sucursal' });
+    if (!esCajaDeHoy(caja)) return res.status(409).json({ error: 'Esta caja pertenece a un dia anterior. Cierrala antes de registrar movimientos.', requiere_cierre: true });
 
     const tipo = String(tipo_movimiento || '').toUpperCase();
     const montoNum = Math.abs(Number(monto));

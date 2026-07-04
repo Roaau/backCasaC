@@ -55,11 +55,24 @@ describe('Caja - estadoCaja()', () => {
   });
 
   test('devuelve abierta: true cuando hay caja abierta', async () => {
-    Caja.findOne.mockResolvedValue({ caja_id: 42, estado: 'ABIERTA', monto_inicial: 500 });
+    Caja.findOne.mockResolvedValue({ caja_id: 42, estado: 'ABIERTA', fecha_apertura: new Date().toISOString(), monto_inicial: 500 });
     const req = { query: { usuario_id: '1', sucursal_id: '1' }, usuario: { empresa_id: 1, sucursal_id: 1, rol: 1 } };
     const res = mockRes();
     await estadoCaja(req, res);
     expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ abierta: true }));
+  });
+  test('marca caja de dia anterior como pendiente de cierre', async () => {
+    const ayer = new Date();
+    ayer.setDate(ayer.getDate() - 1);
+    Caja.findOne.mockResolvedValue({ caja_id: 41, fecha_apertura: ayer.toISOString(), monto_inicial: 500 });
+    const req = { query: { usuario_id: '1', sucursal_id: '1' }, usuario: { empresa_id: 1, sucursal_id: 1, rol: 1 } };
+    const res = mockRes();
+    await estadoCaja(req, res);
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
+      abierta: true,
+      requiere_cierre: true,
+      pendiente_cierre: true
+    }));
   });
 });
 
@@ -81,6 +94,20 @@ describe('Caja - abrirCaja()', () => {
     expect(res.status).toHaveBeenCalledWith(400);
   });
 
+
+  test('no autocierra caja anterior al abrir una nueva', async () => {
+    const ayer = new Date();
+    ayer.setDate(ayer.getDate() - 1);
+    const update = jest.fn();
+    Caja.findOne.mockResolvedValue({ caja_id: 1, fecha_apertura: ayer.toISOString(), update });
+    const req = { body: { usuario_id: 1, monto: 500, sucursal_id: 1 }, usuario: { empresa_id: 1, sucursal_id: 1, rol: 1 } };
+    const res = mockRes();
+    await abrirCaja(req, res);
+    expect(res.status).toHaveBeenCalledWith(409);
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ requiere_cierre: true }));
+    expect(update).not.toHaveBeenCalled();
+    expect(Caja.create).not.toHaveBeenCalled();
+  });
   test('crea una caja nueva si no hay caja activa', async () => {
     Caja.findOne.mockResolvedValue(null);
     Caja.create.mockResolvedValue({ caja_id: 10, monto_inicial: 300 });

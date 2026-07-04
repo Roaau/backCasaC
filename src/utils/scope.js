@@ -93,4 +93,7 @@ export const resolverScopeSucursales = async (req, options = {}) => {
 };
 
 export const responderErrorScope = (res, error) =>
-  res.status(error.status || 500).json({ error: error.message });
+  res.status(error.status || 500).json({
+    error: error.message,
+    ...(error.requiere_cierre ? { requiere_cierre: true } : {})
+  });
