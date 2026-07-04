@@ -9,8 +9,22 @@ import { Op } from "sequelize";
 import sequelize from "../config/database.js";
 import multer from "multer";
 import XLSX from "xlsx";
+import { registrarAuditoria } from "../utils/auditoria.js";
 
 const uploadCatalogo = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } }).single('archivo');
+
+async function auditarSuperadmin(req, accion, empresa, detalle = {}) {
+  await registrarAuditoria(req, {
+    accion,
+    entidad: 'superadmin_empresas',
+    entidad_id: empresa?.empresa_id,
+    detalle: {
+      empresa_id: empresa?.empresa_id,
+      razon_social: empresa?.razon_social,
+      ...detalle
+    }
+  });
+}
 
 // GET /api/superadmin/empresas
 export const listarEmpresas = async (req, res) => {
@@ -127,7 +141,9 @@ export const aprobarEmpresa = async (req, res) => {
     const empresa = await Empresa.findByPk(id);
     if (!empresa) return res.status(404).json({ error: 'Empresa no encontrada' });
 
+    const estadoAnterior = empresa.estado;
     await empresa.update({ estado: 'activa', notas_admin: notas || empresa.notas_admin });
+    await auditarSuperadmin(req, 'SUPERADMIN_EMPRESA_APROBAR', empresa, { estado_anterior: estadoAnterior, estado_nuevo: 'activa', notas });
 
     if (empresa.email_contacto) {
       notificarEmpresaAprobada({
@@ -150,7 +166,9 @@ export const rechazarEmpresa = async (req, res) => {
     const empresa = await Empresa.findByPk(id);
     if (!empresa) return res.status(404).json({ error: 'Empresa no encontrada' });
 
+    const estadoAnterior = empresa.estado;
     await empresa.update({ estado: 'rechazada', notas_admin: notas || empresa.notas_admin });
+    await auditarSuperadmin(req, 'SUPERADMIN_EMPRESA_RECHAZAR', empresa, { estado_anterior: estadoAnterior, estado_nuevo: 'rechazada', notas });
 
     if (empresa.email_contacto) {
       notificarEmpresaRechazada({
@@ -174,7 +192,9 @@ export const suspenderEmpresa = async (req, res) => {
     const empresa = await Empresa.findByPk(id);
     if (!empresa) return res.status(404).json({ error: 'Empresa no encontrada' });
 
+    const estadoAnterior = empresa.estado;
     await empresa.update({ estado: 'suspendida', notas_admin: notas || empresa.notas_admin });
+    await auditarSuperadmin(req, 'SUPERADMIN_EMPRESA_SUSPENDER', empresa, { estado_anterior: estadoAnterior, estado_nuevo: 'suspendida', notas });
     res.json({ mensaje: `${empresa.razon_social} suspendida` });
   } catch {
     res.status(500).json({ error: 'Error al suspender empresa' });
@@ -188,7 +208,9 @@ export const reactivarEmpresa = async (req, res) => {
     const empresa = await Empresa.findByPk(id);
     if (!empresa) return res.status(404).json({ error: 'Empresa no encontrada' });
 
+    const estadoAnterior = empresa.estado;
     await empresa.update({ estado: 'activa' });
+    await auditarSuperadmin(req, 'SUPERADMIN_EMPRESA_REACTIVAR', empresa, { estado_anterior: estadoAnterior, estado_nuevo: 'activa' });
 
     if (empresa.email_contacto) {
       notificarEmpresaAprobada({
@@ -209,7 +231,15 @@ export const toggleSucursal = async (req, res) => {
   try {
     const sucursal = await Sucursal.findByPk(id);
     if (!sucursal) return res.status(404).json({ error: 'Sucursal no encontrada' });
+    const activaAnterior = sucursal.activa;
     await sucursal.update({ activa: !sucursal.activa });
+    await registrarAuditoria(req, {
+      accion: 'SUPERADMIN_SUCURSAL_TOGGLE',
+      entidad: 'sucursales',
+      entidad_id: sucursal.sucursal_id,
+      sucursal_id: sucursal.sucursal_id,
+      detalle: { empresa_id: sucursal.empresa_id, nombre: sucursal.nombre, activa_anterior: activaAnterior, activa_nueva: sucursal.activa }
+    });
     res.json({ mensaje: `Sucursal ${sucursal.activa ? 'activada' : 'desactivada'}`, activa: sucursal.activa });
   } catch {
     res.status(500).json({ error: 'Error al actualizar sucursal' });
@@ -223,7 +253,14 @@ export const toggleUsuario = async (req, res) => {
     const usuario = await Usuario.findByPk(id);
     if (!usuario) return res.status(404).json({ error: 'Usuario no encontrado' });
     if (usuario.es_superadmin) return res.status(403).json({ error: 'No se puede desactivar al superadmin' });
+    const activoAnterior = usuario.activo;
     await usuario.update({ activo: !usuario.activo });
+    await registrarAuditoria(req, {
+      accion: 'SUPERADMIN_USUARIO_TOGGLE',
+      entidad: 'usuarios',
+      entidad_id: usuario.usuario_id,
+      detalle: { empresa_id: usuario.empresa_id, usuario: usuario.usuario, activo_anterior: activoAnterior, activo_nuevo: usuario.activo }
+    });
     res.json({ mensaje: `Usuario ${usuario.activo ? 'activado' : 'desactivado'}`, activo: usuario.activo });
   } catch {
     res.status(500).json({ error: 'Error al actualizar usuario' });
@@ -237,7 +274,9 @@ export const actualizarNotas = async (req, res) => {
   try {
     const empresa = await Empresa.findByPk(id);
     if (!empresa) return res.status(404).json({ error: 'Empresa no encontrada' });
+    const notasAnteriores = empresa.notas_admin;
     await empresa.update({ notas_admin: notas });
+    await auditarSuperadmin(req, 'SUPERADMIN_EMPRESA_NOTAS', empresa, { notas_anteriores: notasAnteriores, notas_nuevas: notas });
     res.json({ mensaje: 'Notas actualizadas' });
   } catch {
     res.status(500).json({ error: 'Error al actualizar notas' });
@@ -259,6 +298,15 @@ export const actualizarComercial = async (req, res) => {
   try {
     const empresa = await Empresa.findByPk(id);
     if (!empresa) return res.status(404).json({ error: 'Empresa no encontrada' });
+    const anterior = {
+      plan: empresa.plan,
+      precio_mensual: Number(empresa.precio_mensual || 0),
+      fecha_vencimiento: empresa.fecha_vencimiento,
+      limite_sucursales: empresa.limite_sucursales,
+      limite_usuarios: empresa.limite_usuarios,
+      estado: empresa.estado,
+      notas_admin: empresa.notas_admin
+    };
 
     const planesValidos = ['basico', 'pro', 'premium', 'personalizado'];
     const estadosValidos = ['prueba', 'pendiente', 'activa', 'vencida', 'suspendida', 'rechazada'];
@@ -305,6 +353,7 @@ export const actualizarComercial = async (req, res) => {
     if (notas !== undefined) update.notas_admin = notas;
 
     await empresa.update(update);
+    await auditarSuperadmin(req, 'SUPERADMIN_EMPRESA_COMERCIAL', empresa, { anterior, nuevo: update });
     res.json({ mensaje: 'Configuracion comercial actualizada', empresa });
   } catch (e) {
     res.status(500).json({ error: 'Error al actualizar configuracion comercial', detalle: e.message });
