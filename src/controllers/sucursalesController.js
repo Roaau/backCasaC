@@ -3,6 +3,7 @@ import StockSucursal from '../models/StockSucursalModel.js';
 import Producto from '../models/Producto.js';
 import sequelize from '../config/database.js';
 import { esAdminEmpresa, obtenerEmpresaId, responderErrorScope } from '../utils/scope.js';
+import { validarLimiteSucursales } from '../utils/planLimits.js';
 
 const exigirAdmin = (usuario) => {
   if (!esAdminEmpresa(usuario)) {
@@ -39,6 +40,7 @@ export const createSucursal = async (req, res) => {
   try {
     exigirAdmin(req.usuario);
     const empresa_id = obtenerEmpresaId(req.usuario);
+    await validarLimiteSucursales(empresa_id, 1, { transaction: t });
     const sucursal = await Sucursal.create(
       { ...payloadSucursal(req.body), empresa_id },
       { transaction: t }

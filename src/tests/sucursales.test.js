@@ -1,6 +1,14 @@
 jest.mock('../models/SucursalModel.js', () => ({
   __esModule: true,
-  default: { findAll: jest.fn(), create: jest.fn(), update: jest.fn() }
+  default: { findAll: jest.fn(), create: jest.fn(), update: jest.fn(), count: jest.fn() }
+}));
+jest.mock('../models/EmpresaModel.js', () => ({
+  __esModule: true,
+  default: { findByPk: jest.fn() }
+}));
+jest.mock('../models/Usuario.js', () => ({
+  __esModule: true,
+  default: { count: jest.fn() }
 }));
 jest.mock('../models/StockSucursalModel.js', () => ({
   __esModule: true,
@@ -16,6 +24,7 @@ jest.mock('../config/database.js', () => ({
 }));
 
 const { default: Sucursal } = require('../models/SucursalModel.js');
+const { default: Empresa } = require('../models/EmpresaModel.js');
 const { default: StockSucursal } = require('../models/StockSucursalModel.js');
 const { default: Producto } = require('../models/Producto.js');
 const { default: db } = require('../config/database.js');
@@ -35,6 +44,8 @@ describe('Sucursales - seguridad multiempresa', () => {
     jest.clearAllMocks();
     tx = { commit: jest.fn(), rollback: jest.fn() };
     db.transaction.mockResolvedValue(tx);
+    Empresa.findByPk.mockResolvedValue({ empresa_id: 10, plan: 'pro', limite_sucursales: 3 });
+    Sucursal.count.mockResolvedValue(1);
   });
 
   test('lista solo sucursales activas de la empresa del token', async () => {
@@ -84,6 +95,26 @@ describe('Sucursales - seguridad multiempresa', () => {
     expect(Sucursal.create.mock.calls[0][0]).not.toHaveProperty('empresa_id', 999);
     expect(tx.commit).toHaveBeenCalled();
     expect(res.status).toHaveBeenCalledWith(201);
+  });
+
+  test('admin no puede crear sucursal si rebasaria el limite del plan', async () => {
+    Empresa.findByPk.mockResolvedValue({ empresa_id: 10, plan: 'basico', limite_sucursales: 1 });
+    Sucursal.count.mockResolvedValue(1);
+
+    const req = {
+      usuario: { empresa_id: 10, sucursal_id: 1, rol: 1 },
+      body: { nombre: 'Extra' }
+    };
+    const res = mockRes();
+
+    await createSucursal(req, res);
+
+    expect(Sucursal.create).not.toHaveBeenCalled();
+    expect(tx.rollback).toHaveBeenCalled();
+    expect(res.status).toHaveBeenCalledWith(403);
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
+      error: 'Tu plan llego al limite de sucursales activas.'
+    }));
   });
 
   test('update de admin queda limitado por empresa_id del token', async () => {

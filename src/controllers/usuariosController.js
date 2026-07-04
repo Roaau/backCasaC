@@ -1,6 +1,7 @@
 import Usuario from "../models/Usuario.js";
 import bcrypt from "bcrypt";
 import { resolverSucursalOperativa, responderErrorScope, validarSucursalEmpresa } from "../utils/scope.js";
+import { validarLimiteUsuarios } from "../utils/planLimits.js";
 
 const CAMPOS_PUBLICOS = ['usuario_id', 'nombre', 'usuario', 'rol_id', 'sucursal_id', 'empresa_id', 'foto_perfil', 'color_tema', 'activo'];
 
@@ -23,6 +24,7 @@ export const createUsuario = async (req, res) => {
     return res.status(400).json({ error: "Nombre, usuario y contraseña son requeridos" });
   }
   try {
+    await validarLimiteUsuarios(req.usuario.empresa_id, 1);
     const sucursalId = await resolverSucursalOperativa(req, { sucursal_id });
     const hash = await bcrypt.hash(contrasena, 10);
     const nuevo = await Usuario.create({

@@ -10,6 +10,7 @@ import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
 import crypto from "crypto";
 import { enviarCodigoRegistro, enviarCodigoReset, notificarNuevaEmpresa } from "../services/emailService.js";
+import { validarLimiteUsuarios } from "../utils/planLimits.js";
 
 const generarCodigo = () =>
   'INV-' + crypto.randomBytes(3).toString('hex').toUpperCase();
@@ -212,6 +213,7 @@ export const registro = async (req, res) => {
       }
 
       rol_id = codigo.rol_id ?? 2;
+      await validarLimiteUsuarios(empresa_id, 1, { transaction: t });
 
       const nuevosUsos = codigo.usos_restantes - 1;
       await CodigoInvitacion.update(
@@ -322,6 +324,9 @@ export const generarCodigoInvitacion = async (req, res) => {
   const empresa_id = req.usuario.empresa_id;
 
   try {
+    const usosPermitidos = Math.min(Math.max(Number(usos_max) || 1, 1), 20);
+    await validarLimiteUsuarios(empresa_id, usosPermitidos);
+
     if (sucursal_id) {
       const sucursal = await Sucursal.findOne({ where: { sucursal_id, empresa_id } });
       if (!sucursal) {
@@ -335,13 +340,13 @@ export const generarCodigoInvitacion = async (req, res) => {
       sucursal_id,
       rol_id: [1, 2].includes(rol_id) ? rol_id : 2,
       codigo,
-      usos_restantes: Math.min(Math.max(usos_max, 1), 20),
+      usos_restantes: usosPermitidos,
       creado_por: req.usuario.id
     });
 
-    return res.json({ codigo, usos_max, sucursal_id, rol_id });
+    return res.json({ codigo, usos_max: usosPermitidos, sucursal_id, rol_id });
   } catch (error) {
-    return res.status(500).json({ error: 'Error al generar código' });
+    return res.status(error.status || 500).json({ error: error.status ? error.message : 'Error al generar código' });
   }
 };
 
