@@ -18,11 +18,29 @@ export const listarEmpresas = async (req, res) => {
     const empresas = await Empresa.findAll({ order: [['empresa_id', 'DESC']] });
 
     const result = await Promise.all(empresas.map(async (emp) => {
-      const [total_sucursales, total_usuarios] = await Promise.all([
+      const [total_sucursales, total_usuarios, actividad] = await Promise.all([
         Sucursal.count({ where: { empresa_id: emp.empresa_id } }),
-        Usuario.count({ where: { empresa_id: emp.empresa_id, es_superadmin: false } })
+        Usuario.count({ where: { empresa_id: emp.empresa_id, es_superadmin: false } }),
+        sequelize.query(`
+          SELECT
+            COUNT(v.venta_id)::int AS ventas_30d,
+            COALESCE(SUM(v.total), 0)::float AS ingresos_30d,
+            MAX(v.fecha) AS ultima_venta
+          FROM sucursales s
+          LEFT JOIN ventas v ON v.sucursal_id = s.sucursal_id
+            AND v.fecha >= NOW() - INTERVAL '30 days'
+          WHERE s.empresa_id = :empresa_id
+        `, { replacements: { empresa_id: emp.empresa_id }, type: sequelize.QueryTypes.SELECT })
       ]);
-      return { ...emp.toJSON(), total_sucursales, total_usuarios };
+      const resumen = actividad?.[0] || {};
+      return {
+        ...emp.toJSON(),
+        total_sucursales,
+        total_usuarios,
+        ventas_30d: Number(resumen.ventas_30d) || 0,
+        ingresos_30d: Number(resumen.ingresos_30d) || 0,
+        ultima_venta: resumen.ultima_venta || null
+      };
     }));
 
     res.json(result);
