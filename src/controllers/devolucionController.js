@@ -76,7 +76,11 @@ export const crear = async (req, res) => {
       const venta = await Venta.findOne({ where: { venta_id, sucursal_id }, transaction: t });
       if (!venta) throw new Error('La venta no pertenece a esta sucursal');
       const yaDevuelta = await Devolucion.findOne({ where: { venta_id }, transaction: t });
-      if (yaDevuelta) throw new Error('Esta venta ya tiene una devolución registrada');
+      if (yaDevuelta) {
+        const error = new Error('Esta venta ya tiene una devolución registrada');
+        error.status = 409;
+        throw error;
+      }
     }
 
     const totalDevuelto = detalles.reduce((s, d) => s + Number(d.subtotal), 0);
