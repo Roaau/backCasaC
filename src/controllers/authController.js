@@ -34,17 +34,28 @@ export const login = async (req, res) => {
 
     // Verificar estado de la empresa (solo para usuarios normales)
     if (!user.es_superadmin && user.empresa_id) {
-      const empresa = await Empresa.findByPk(user.empresa_id, { attributes: ['estado', 'razon_social'] });
+      const empresa = await Empresa.findByPk(user.empresa_id, { attributes: ['estado', 'razon_social', 'fecha_vencimiento'] });
       if (empresa) {
         if (empresa.estado === 'pendiente') {
           return res.status(403).json({
             mensaje: "Tu empresa está pendiente de aprobación. Te notificaremos por correo cuando sea activada."
           });
         }
-        if (empresa.estado === 'suspendida' || empresa.estado === 'rechazada') {
+        if (empresa.estado === 'suspendida' || empresa.estado === 'rechazada' || empresa.estado === 'vencida') {
           return res.status(403).json({
             mensaje: "El acceso a esta empresa ha sido suspendido. Contacta al soporte de CasaC."
           });
+        }
+        if (empresa.fecha_vencimiento) {
+          const hoy = new Date();
+          hoy.setHours(0, 0, 0, 0);
+          const vencimiento = new Date(`${empresa.fecha_vencimiento}T00:00:00`);
+          if (vencimiento < hoy) {
+            await empresa.update({ estado: 'vencida' });
+            return res.status(403).json({
+              mensaje: "El periodo de servicio de esta empresa vencio. Contacta al soporte de CasaC."
+            });
+          }
         }
       }
     }

@@ -7,6 +7,7 @@ import {
   suspenderEmpresa,
   reactivarEmpresa,
   actualizarNotas,
+  actualizarComercial,
   toggleSucursal,
   toggleUsuario,
   statsCatalogo,
@@ -23,6 +24,7 @@ router.put('/empresas/:id/rechazar', rechazarEmpresa);
 router.put('/empresas/:id/suspender', suspenderEmpresa);
 router.put('/empresas/:id/reactivar', reactivarEmpresa);
 router.put('/empresas/:id/notas',    actualizarNotas);
+router.put('/empresas/:id/comercial', actualizarComercial);
 router.put('/sucursales/:id/toggle', toggleSucursal);
 router.put('/usuarios/:id/toggle',   toggleUsuario);
 

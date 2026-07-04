@@ -244,6 +244,73 @@ export const actualizarNotas = async (req, res) => {
   }
 };
 
+// PUT /api/superadmin/empresas/:id/comercial
+export const actualizarComercial = async (req, res) => {
+  const { id } = req.params;
+  const {
+    plan,
+    precio_mensual,
+    fecha_vencimiento,
+    limite_sucursales,
+    limite_usuarios,
+    estado,
+    notas
+  } = req.body;
+  try {
+    const empresa = await Empresa.findByPk(id);
+    if (!empresa) return res.status(404).json({ error: 'Empresa no encontrada' });
+
+    const planesValidos = ['basico', 'pro', 'premium', 'personalizado'];
+    const estadosValidos = ['prueba', 'pendiente', 'activa', 'vencida', 'suspendida', 'rechazada'];
+    const update = {};
+
+    if (plan !== undefined) {
+      const planNormalizado = String(plan).toLowerCase().trim();
+      if (!planesValidos.includes(planNormalizado)) {
+        return res.status(400).json({ error: 'Plan no valido' });
+      }
+      update.plan = planNormalizado;
+    }
+
+    if (estado !== undefined) {
+      const estadoNormalizado = String(estado).toLowerCase().trim();
+      if (!estadosValidos.includes(estadoNormalizado)) {
+        return res.status(400).json({ error: 'Estado no valido' });
+      }
+      update.estado = estadoNormalizado;
+    }
+
+    if (precio_mensual !== undefined) {
+      const precio = Number(precio_mensual);
+      if (!Number.isFinite(precio) || precio < 0) return res.status(400).json({ error: 'Precio mensual invalido' });
+      update.precio_mensual = precio;
+    }
+
+    if (fecha_vencimiento !== undefined) {
+      update.fecha_vencimiento = fecha_vencimiento || null;
+    }
+
+    if (limite_sucursales !== undefined) {
+      const limite = Number(limite_sucursales);
+      if (!Number.isInteger(limite) || limite < 1) return res.status(400).json({ error: 'Limite de sucursales invalido' });
+      update.limite_sucursales = limite;
+    }
+
+    if (limite_usuarios !== undefined) {
+      const limite = Number(limite_usuarios);
+      if (!Number.isInteger(limite) || limite < 1) return res.status(400).json({ error: 'Limite de usuarios invalido' });
+      update.limite_usuarios = limite;
+    }
+
+    if (notas !== undefined) update.notas_admin = notas;
+
+    await empresa.update(update);
+    res.json({ mensaje: 'Configuracion comercial actualizada', empresa });
+  } catch (e) {
+    res.status(500).json({ error: 'Error al actualizar configuracion comercial', detalle: e.message });
+  }
+};
+
 // GET /api/superadmin/catalogo/stats
 export const statsCatalogo = async (req, res) => {
   try {
