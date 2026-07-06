@@ -101,11 +101,15 @@ Sucursal.hasMany(MovimientoInventario, { foreignKey: 'sucursal_id' });
 
 const app = express();
 app.set('trust proxy', 1);
-const allowedOrigins = (process.env.FRONTEND_URL || '')
-  .split(',')
-  .map(o => o.trim())
-  .filter(Boolean);
-const allowVercelPreview = process.env.ALLOW_VERCEL_PREVIEW !== 'false';
+const defaultFrontendOrigins = ['https://sc-gamma-flame.vercel.app'];
+const allowedOrigins = [...new Set([
+  ...defaultFrontendOrigins,
+  ...(process.env.FRONTEND_URL || '')
+    .split(',')
+    .map(o => o.trim())
+    .filter(Boolean)
+])];
+const allowVercelPreview = process.env.ALLOW_VERCEL_PREVIEW === 'true' || process.env.NODE_ENV !== 'production';
 
 app.use(helmet());
 app.use(cors({
@@ -132,9 +136,10 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 // Rate limiting - proteccion contra brute-force
 const loginLimit = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 30,
+  max: 10,
   standardHeaders: true,
   legacyHeaders: false,
+  skipSuccessfulRequests: true,
   message: { mensaje: 'Demasiados intentos de acceso. Espera 15 minutos e intenta de nuevo.' }
 });
 const otpLimit = rateLimit({
@@ -230,7 +235,33 @@ cron.schedule('*/30 * * * *', async () => {
     }
   } catch (_) {}
 });
-app.get("/api/health", (req, res) => res.json({ ok: true, service: "inventario-api", time: new Date().toISOString() }));
+app.get("/api/health", (req, res) => res.json({
+  ok: true,
+  service: "inventario-api",
+  uptime: Math.round(process.uptime()),
+  time: new Date().toISOString()
+}));
+app.get("/api/health/deep", async (req, res) => {
+  const started = Date.now();
+  try {
+    await sequelize.query("SELECT 1");
+    res.json({
+      ok: true,
+      service: "inventario-api",
+      database: "ok",
+      latency_ms: Date.now() - started,
+      time: new Date().toISOString()
+    });
+  } catch {
+    res.status(503).json({
+      ok: false,
+      service: "inventario-api",
+      database: "error",
+      latency_ms: Date.now() - started,
+      time: new Date().toISOString()
+    });
+  }
+});
 app.use("/api", apiLimit);
 app.use("/api/auth/login",               loginLimit);
 app.use("/api/auth/solicitar-registro", otpLimit);

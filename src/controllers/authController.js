@@ -15,6 +15,8 @@ import { validarLimiteUsuarios } from "../utils/planLimits.js";
 const generarCodigo = () =>
   'INV-' + crypto.randomBytes(3).toString('hex').toUpperCase();
 
+const MENSAJE_LOGIN_INVALIDO = "Usuario o contrasena incorrectos";
+
 // ── POST /api/auth/login ─────────────────────────────────────────────────────
 export const login = async (req, res) => {
   const { usuario, contrasena } = req.body;
@@ -24,10 +26,10 @@ export const login = async (req, res) => {
 
   try {
     const user = await Usuario.findOne({ where: { usuario } });
-    if (!user) return res.status(401).json({ mensaje: "Usuario no encontrado" });
+    if (!user) return res.status(401).json({ mensaje: MENSAJE_LOGIN_INVALIDO });
 
     const passwordMatch = await bcrypt.compare(contrasena, user.contrasena);
-    if (!passwordMatch) return res.status(401).json({ mensaje: "Contraseña incorrecta" });
+    if (!passwordMatch) return res.status(401).json({ mensaje: MENSAJE_LOGIN_INVALIDO });
 
     if (user.activo === false) {
       return res.status(403).json({ mensaje: "Cuenta desactivada. Contacta al administrador." });
