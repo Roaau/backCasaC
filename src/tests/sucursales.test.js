@@ -44,7 +44,7 @@ describe('Sucursales - seguridad multiempresa', () => {
     jest.clearAllMocks();
     tx = { commit: jest.fn(), rollback: jest.fn() };
     db.transaction.mockResolvedValue(tx);
-    Empresa.findByPk.mockResolvedValue({ empresa_id: 10, plan: 'pro', limite_sucursales: 3 });
+    Empresa.findByPk.mockResolvedValue({ empresa_id: 10, plan: 'pro', limite_sucursales: 2 });
     Sucursal.count.mockResolvedValue(1);
   });
 

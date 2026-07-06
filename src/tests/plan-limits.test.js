@@ -23,7 +23,7 @@ describe('Limites comerciales por plan', () => {
   });
 
   test('permite crear usuario si la empresa sigue dentro del limite', async () => {
-    Empresa.findByPk.mockResolvedValue({ empresa_id: 10, plan: 'pro', limite_usuarios: 8 });
+    Empresa.findByPk.mockResolvedValue({ empresa_id: 10, plan: 'pro', limite_usuarios: 10 });
     Usuario.count.mockResolvedValue(3);
 
     await expect(validarLimiteUsuarios(10, 1)).resolves.toBeUndefined();
@@ -34,8 +34,8 @@ describe('Limites comerciales por plan', () => {
   });
 
   test('bloquea crear usuario si rebasa el limite del plan', async () => {
-    Empresa.findByPk.mockResolvedValue({ empresa_id: 10, plan: 'basico', limite_usuarios: 2 });
-    Usuario.count.mockResolvedValue(2);
+    Empresa.findByPk.mockResolvedValue({ empresa_id: 10, plan: 'basico', limite_usuarios: 5 });
+    Usuario.count.mockResolvedValue(5);
 
     await expect(validarLimiteUsuarios(10, 1)).rejects.toMatchObject({
       status: 403,

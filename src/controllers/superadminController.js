@@ -340,7 +340,7 @@ export const actualizarComercial = async (req, res) => {
       notas_admin: empresa.notas_admin
     };
 
-    const planesValidos = ['basico', 'pro', 'premium', 'personalizado'];
+    const planesValidos = ['basico', 'pro', 'multisucursal'];
     const estadosValidos = ['prueba', 'pendiente', 'activa', 'vencida', 'suspendida', 'rechazada'];
     const update = {};
 
@@ -383,6 +383,40 @@ export const actualizarComercial = async (req, res) => {
     }
 
     if (notas !== undefined) update.notas_admin = notas;
+
+    const planFinal = update.plan || empresa.plan || 'basico';
+    const precioFinal = update.precio_mensual !== undefined
+      ? Number(update.precio_mensual)
+      : Number(empresa.precio_mensual || 0);
+    const limiteSucursalesFinal = update.limite_sucursales !== undefined
+      ? Number(update.limite_sucursales)
+      : Number(empresa.limite_sucursales || 1);
+    const limiteUsuariosFinal = update.limite_usuarios !== undefined
+      ? Number(update.limite_usuarios)
+      : Number(empresa.limite_usuarios || 1);
+
+    const cambiaPlanComercial = plan !== undefined ||
+      precio_mensual !== undefined ||
+      limite_sucursales !== undefined ||
+      limite_usuarios !== undefined;
+
+    if (cambiaPlanComercial && planFinal === 'basico') {
+      if (limiteSucursalesFinal > 1) return res.status(400).json({ error: 'El plan Basico permite maximo 1 sucursal' });
+      if (limiteUsuariosFinal > 5) return res.status(400).json({ error: 'El plan Basico permite maximo 5 usuarios' });
+      if (precioFinal < 700) return res.status(400).json({ error: 'El plan Basico debe costar al menos 700 MXN mensuales' });
+    }
+
+    if (cambiaPlanComercial && planFinal === 'pro') {
+      if (limiteSucursalesFinal > 2) return res.status(400).json({ error: 'El plan Pro permite maximo 2 sucursales' });
+      if (limiteUsuariosFinal > 10) return res.status(400).json({ error: 'El plan Pro permite maximo 10 usuarios' });
+      if (precioFinal < 1400) return res.status(400).json({ error: 'El plan Pro debe costar al menos 1400 MXN mensuales' });
+    }
+
+    if (cambiaPlanComercial && planFinal === 'multisucursal') {
+      if (limiteSucursalesFinal < 3) return res.status(400).json({ error: 'El plan Multi-sucursal requiere minimo 3 sucursales' });
+      const minimo = limiteSucursalesFinal * 750;
+      if (precioFinal < minimo) return res.status(400).json({ error: `El plan Multi-sucursal debe costar al menos ${minimo} MXN mensuales` });
+    }
 
     await empresa.update(update);
     await auditarSuperadmin(req, 'SUPERADMIN_EMPRESA_COMERCIAL', empresa, { anterior, nuevo: update });

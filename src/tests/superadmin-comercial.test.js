@@ -76,10 +76,10 @@ const empresaBase = () => ({
   empresa_id: 7,
   razon_social: 'Cliente Prueba',
   plan: 'basico',
-  precio_mensual: '599.00',
+  precio_mensual: '700.00',
   fecha_vencimiento: null,
   limite_sucursales: 1,
-  limite_usuarios: 2,
+  limite_usuarios: 5,
   estado: 'activa',
   notas_admin: null,
   update: jest.fn().mockResolvedValue(true)
@@ -112,6 +112,36 @@ describe('Superadmin comercial', () => {
     expect(res.json).toHaveBeenCalledWith({ error: 'Precio mensual invalido' });
   });
 
+  test('rechaza plan basico por debajo del precio oficial', async () => {
+    Empresa.findByPk.mockResolvedValue(empresaBase());
+    const req = {
+      params: { id: '7' },
+      body: { plan: 'basico', precio_mensual: 699, limite_sucursales: 1, limite_usuarios: 5 },
+      usuario: { id: 1, es_superadmin: true }
+    };
+    const res = mockRes();
+
+    await actualizarComercial(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(res.json).toHaveBeenCalledWith({ error: 'El plan Basico debe costar al menos 700 MXN mensuales' });
+  });
+
+  test('rechaza multi-sucursal cuando el precio no cubre las sucursales', async () => {
+    Empresa.findByPk.mockResolvedValue(empresaBase());
+    const req = {
+      params: { id: '7' },
+      body: { plan: 'multisucursal', precio_mensual: 2000, limite_sucursales: 3, limite_usuarios: 15 },
+      usuario: { id: 1, es_superadmin: true }
+    };
+    const res = mockRes();
+
+    await actualizarComercial(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(res.json).toHaveBeenCalledWith({ error: 'El plan Multi-sucursal debe costar al menos 2250 MXN mensuales' });
+  });
+
   test('actualiza plan y registra auditoria', async () => {
     const empresa = empresaBase();
     Empresa.findByPk.mockResolvedValue(empresa);
@@ -119,10 +149,10 @@ describe('Superadmin comercial', () => {
       params: { id: '7' },
       body: {
         plan: 'pro',
-        precio_mensual: 999,
+        precio_mensual: 1400,
         fecha_vencimiento: '2026-08-04',
-        limite_sucursales: 3,
-        limite_usuarios: 8,
+        limite_sucursales: 2,
+        limite_usuarios: 10,
         estado: 'activa',
         notas: 'Pago mensual manual'
       },
@@ -135,10 +165,10 @@ describe('Superadmin comercial', () => {
 
     expect(empresa.update).toHaveBeenCalledWith(expect.objectContaining({
       plan: 'pro',
-      precio_mensual: 999,
+      precio_mensual: 1400,
       fecha_vencimiento: '2026-08-04',
-      limite_sucursales: 3,
-      limite_usuarios: 8,
+      limite_sucursales: 2,
+      limite_usuarios: 10,
       estado: 'activa',
       notas_admin: 'Pago mensual manual'
     }));
