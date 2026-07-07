@@ -16,7 +16,8 @@ jest.mock('sequelize', () => ({
 jest.mock('../services/emailService.js', () => ({
   enviarCodigoRegistro:  jest.fn().mockResolvedValue(true),
   enviarCodigoReset:     jest.fn().mockResolvedValue(true),
-  notificarNuevaEmpresa: jest.fn().mockResolvedValue(true)
+  notificarNuevaEmpresa: jest.fn().mockResolvedValue(true),
+  notificarEmpresaRegistrada: jest.fn().mockResolvedValue(true)
 }));
 
 const { default: Usuario }    = require('../models/Usuario.js');
@@ -73,5 +74,23 @@ describe('Auth — login()', () => {
     const res = mockRes();
     await login({ body: { usuario: 'admin', contrasena: 'correcta' } }, res);
     expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ token: 'token-jwt-fake' }));
+  });
+
+  test('bloquea login cuando la empresa sigue pendiente', async () => {
+    Usuario.findOne.mockResolvedValue({
+      usuario_id: 1, usuario: 'admin', nombre: 'Administrador',
+      contrasena: 'hash', activo: true, empresa_id: 1, sucursal_id: 1,
+      rol_id: 1, es_admin: true, es_superadmin: false
+    });
+    bcrypt.compare.mockResolvedValue(true);
+    Empresa.findByPk.mockResolvedValue({ estado: 'pendiente', razon_social: 'Cliente Nuevo', fecha_vencimiento: null });
+
+    const res = mockRes();
+    await login({ body: { usuario: 'admin', contrasena: 'correcta' } }, res);
+
+    expect(res.status).toHaveBeenCalledWith(403);
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
+      mensaje: expect.stringContaining('pendiente')
+    }));
   });
 });

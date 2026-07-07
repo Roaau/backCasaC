@@ -5,7 +5,7 @@ import Venta from "../models/Venta.js";
 import MovimientoInventario from "../models/MovimientoInventario.js";
 import CatalogoMaestro from "../models/CatalogoMaestro.js";
 import Auditoria from "../models/Auditoria.js";
-import { notificarEmpresaAprobada, notificarEmpresaRechazada } from "../services/emailService.js";
+import { notificarEmpresaAprobada, notificarEmpresaRechazada, notificarEmpresaSuspendida } from "../services/emailService.js";
 import { Op } from "sequelize";
 import sequelize from "../config/database.js";
 import multer from "multer";
@@ -196,6 +196,15 @@ export const suspenderEmpresa = async (req, res) => {
     const estadoAnterior = empresa.estado;
     await empresa.update({ estado: 'suspendida', notas_admin: notas || empresa.notas_admin });
     await auditarSuperadmin(req, 'SUPERADMIN_EMPRESA_SUSPENDER', empresa, { estado_anterior: estadoAnterior, estado_nuevo: 'suspendida', notas });
+
+    if (empresa.email_contacto) {
+      notificarEmpresaSuspendida({
+        destinatario: empresa.email_contacto,
+        razon_social: empresa.razon_social,
+        motivo: notas || null
+      }).catch(() => {});
+    }
+
     res.json({ mensaje: `${empresa.razon_social} suspendida` });
   } catch {
     res.status(500).json({ error: 'Error al suspender empresa' });

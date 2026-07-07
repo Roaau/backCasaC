@@ -235,33 +235,35 @@ cron.schedule('*/30 * * * *', async () => {
     }
   } catch (_) {}
 });
-app.get("/api/health", (req, res) => res.json({
-  ok: true,
-  service: "inventario-api",
-  uptime: Math.round(process.uptime()),
-  time: new Date().toISOString()
-}));
-app.get("/api/health/deep", async (req, res) => {
+const responderHealth = async (req, res) => {
+  const timestamp = new Date().toISOString();
   const started = Date.now();
   try {
-    await sequelize.query("SELECT 1");
-    res.json({
+    await sequelize.authenticate();
+    return res.status(200).json({
       ok: true,
-      service: "inventario-api",
-      database: "ok",
+      service: "SC POS API",
+      status: "healthy",
+      database: "connected",
       latency_ms: Date.now() - started,
-      time: new Date().toISOString()
+      timestamp
     });
-  } catch {
-    res.status(503).json({
+  } catch (error) {
+    if (process.env.SENTRY_DSN) Sentry.captureException(error);
+    return res.status(500).json({
       ok: false,
-      service: "inventario-api",
-      database: "error",
+      service: "SC POS API",
+      status: "unhealthy",
+      database: "disconnected",
+      error: "No se pudo conectar con la base de datos",
       latency_ms: Date.now() - started,
-      time: new Date().toISOString()
+      timestamp
     });
   }
-});
+};
+
+app.get("/api/health", responderHealth);
+app.get("/api/health/deep", responderHealth);
 app.use("/api", apiLimit);
 app.use("/api/auth/login",               loginLimit);
 app.use("/api/auth/solicitar-registro", otpLimit);

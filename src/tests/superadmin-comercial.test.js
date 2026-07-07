@@ -45,7 +45,8 @@ jest.mock('../models/Auditoria.js', () => ({
 
 jest.mock('../services/emailService.js', () => ({
   notificarEmpresaAprobada: jest.fn(),
-  notificarEmpresaRechazada: jest.fn()
+  notificarEmpresaRechazada: jest.fn(),
+  notificarEmpresaSuspendida: jest.fn()
 }));
 
 jest.mock('../utils/auditoria.js', () => ({

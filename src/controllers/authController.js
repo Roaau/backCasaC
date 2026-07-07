@@ -9,7 +9,7 @@ import { Op } from "sequelize";
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
 import crypto from "crypto";
-import { enviarCodigoRegistro, enviarCodigoReset, notificarNuevaEmpresa } from "../services/emailService.js";
+import { enviarCodigoRegistro, enviarCodigoReset, notificarNuevaEmpresa, notificarEmpresaRegistrada } from "../services/emailService.js";
 import { validarLimiteUsuarios } from "../utils/planLimits.js";
 
 const generarCodigo = () =>
@@ -170,7 +170,8 @@ export const registro = async (req, res) => {
   const {
     nombre, usuario, contrasena, codigo_invitacion,
     rfc, razon_social, regimen_fiscal,
-    email, codigo_verificacion
+    email, codigo_verificacion,
+    plan, precio_mensual, limite_sucursales, limite_usuarios
   } = req.body;
 
   if (!nombre || !usuario || !contrasena) {
@@ -253,13 +254,43 @@ export const registro = async (req, res) => {
       // Marca el código como usado dentro de la transacción
       await SolicitudRegistro.update({ usado: true }, { where: { id: solicitud.id }, transaction: t });
 
+      const planesValidos = ['basico', 'pro', 'multisucursal'];
+      const planNormalizado = planesValidos.includes(String(plan || '').toLowerCase().trim())
+        ? String(plan).toLowerCase().trim()
+        : 'basico';
+      const estadoInicial = 'pendiente';
+      const limiteSucursalesSolicitado = Math.max(1, Number(limite_sucursales) || 1);
+      const limiteUsuariosSolicitado = Math.max(1, Number(limite_usuarios) || 5);
+      const precioSolicitado = Math.max(0, Number(precio_mensual) || 0);
+      let limiteSucursales = 1;
+      let limiteUsuarios = 5;
+      let precioMensual = 700;
+
+      if (planNormalizado === 'pro') {
+        limiteSucursales = Math.min(limiteSucursalesSolicitado, 2);
+        limiteUsuarios = Math.min(limiteUsuariosSolicitado, 10);
+        precioMensual = Math.max(precioSolicitado, 1400);
+      } else if (planNormalizado === 'multisucursal') {
+        limiteSucursales = Math.max(3, limiteSucursalesSolicitado);
+        limiteUsuarios = Math.max(limiteSucursales * 5, limiteUsuariosSolicitado);
+        precioMensual = Math.max(precioSolicitado, limiteSucursales * 750);
+      } else {
+        limiteSucursales = 1;
+        limiteUsuarios = 5;
+        precioMensual = Math.max(precioSolicitado, 700);
+      }
+
       const empresa = await Empresa.create(
         {
           rfc:            rfc ? rfc.trim().toUpperCase() : null,
           razon_social:   razon_social?.trim() || nombre.trim(),
           regimen_fiscal: regimen_fiscal || null,
           activo:         true,
-          estado:         'pendiente',
+          estado:         estadoInicial,
+          plan:           planNormalizado,
+          precio_mensual: precioMensual,
+          limite_sucursales: limiteSucursales,
+          limite_usuarios: limiteUsuarios,
           email_contacto: email.toLowerCase().trim()
         },
         { transaction: t }
@@ -288,22 +319,33 @@ export const registro = async (req, res) => {
 
     await t.commit();
 
-    // Notificar al superadmin si se creó una empresa nueva (fire-and-forget)
+    // Notificar si se creó una empresa nueva (fire-and-forget)
     if (rol_id === 1 && email) {
       try {
-        const empresaCreada = await Empresa.findByPk(empresa_id, { attributes: ['razon_social', 'rfc', 'email_contacto'] });
+        const empresaCreada = await Empresa.findByPk(empresa_id, {
+          attributes: ['razon_social', 'rfc', 'email_contacto', 'plan', 'precio_mensual', 'limite_sucursales', 'limite_usuarios', 'estado']
+        });
         notificarNuevaEmpresa({
           razon_social: empresaCreada.razon_social,
           rfc:          empresaCreada.rfc,
           email_admin:  email,
           empresa_id
         }).catch(() => {});
+        notificarEmpresaRegistrada({
+          destinatario:       empresaCreada.email_contacto,
+          razon_social:       empresaCreada.razon_social,
+          plan:               empresaCreada.plan,
+          precio_mensual:     empresaCreada.precio_mensual,
+          limite_sucursales:  empresaCreada.limite_sucursales,
+          limite_usuarios:    empresaCreada.limite_usuarios,
+          estado:             empresaCreada.estado
+        }).catch(() => {});
       } catch { /* no bloquear el registro si el email falla */ }
     }
 
     return res.status(201).json({
       mensaje:    rol_id === 1
-        ? 'Empresa registrada. Tu cuenta será activada pronto.'
+        ? 'Empresa registrada correctamente.'
         : 'Cuenta creada correctamente',
       usuario_id: nuevoUsuario.usuario_id,
       rol_id,

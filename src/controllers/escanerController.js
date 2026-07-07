@@ -30,7 +30,7 @@ export const leerCodigoDeImagen = async (req, res) => {
     });
 
   } catch (err) {
-    console.error('❌ Error leyendo código de imagen:', err);
+    console.error('Error leyendo codigo de imagen:', err);
     return res.status(500).json({ error: 'Error procesando la imagen.' });
   }
 };

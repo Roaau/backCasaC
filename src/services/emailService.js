@@ -51,7 +51,7 @@ export const enviarCodigoRegistro = async ({ destinatario, codigo }) => {
         <p style="margin:0;font-family:'Courier New',monospace;font-size:42px;font-weight:800;color:#1e2227;letter-spacing:10px;">${codigo}</p>
       </div>
       <div style="background:#fffbeb;border-left:4px solid #f59e0b;border-radius:0 8px 8px 0;padding:12px 16px;margin-bottom:20px;">
-        <p style="margin:0;font-size:13px;color:#78350f;">⏱ Este código expira en <strong>15 minutos</strong> y es de un solo uso.</p>
+        <p style="margin:0;font-size:13px;color:#78350f;">Este codigo expira en <strong>15 minutos</strong> y es de un solo uso.</p>
       </div>
       <p style="margin:0;font-size:13px;color:#aaa;">Si no solicitaste este código, ignora este correo.</p>
     </div>
@@ -89,7 +89,7 @@ export const enviarCodigoReset = async ({ destinatario, codigo, nombreUsuario })
         <p style="margin:0;font-family:'Courier New',monospace;font-size:42px;font-weight:800;color:#1e2227;letter-spacing:10px;">${codigo}</p>
       </div>
       <div style="background:#fffbeb;border-left:4px solid #f59e0b;border-radius:0 8px 8px 0;padding:12px 16px;margin-bottom:20px;">
-        <p style="margin:0;font-size:13px;color:#78350f;">⏱ Este código expira en <strong>15 minutos</strong>.</p>
+        <p style="margin:0;font-size:13px;color:#78350f;">Este codigo expira en <strong>15 minutos</strong>.</p>
       </div>
       <p style="margin:0;font-size:13px;color:#aaa;">Si no solicitaste esto, ignora este correo.</p>
     </div>
@@ -154,7 +154,6 @@ export const notificarEmpresaAprobada = async ({ destinatario, razon_social }) =
     </div>
     <div style="background:#fff;padding:40px;">
       <div style="background:#f0fdf4;border:2px solid #86efac;border-radius:12px;padding:24px;text-align:center;margin-bottom:28px;">
-        <p style="margin:0;font-size:36px;">✅</p>
         <p style="margin:8px 0 0;font-size:18px;font-weight:700;color:#166534;">¡Empresa activada!</p>
       </div>
       <p style="margin:0;font-size:14px;color:#555;line-height:1.6;">
@@ -198,6 +197,76 @@ export const notificarEmpresaRechazada = async ({ destinatario, razon_social, mo
     </div>
   </div>
 </div>
+</body></html>`,
+  });
+};
+
+export const notificarEmpresaRegistrada = async ({
+  destinatario,
+  razon_social,
+  plan,
+  precio_mensual,
+  limite_sucursales,
+  limite_usuarios,
+  estado,
+}) => {
+  if (!process.env.BREVO_API_KEY) return;
+  const estadoTexto = estado === "activa"
+    ? "Tu cuenta quedo activa."
+    : "Tu cuenta quedo pendiente de aprobacion.";
+  await enviarBrevo({
+    to: destinatario,
+    subject: "Bienvenido a SC POS",
+    html: `<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8"></head>
+<body style="margin:0;padding:0;background:#f0f2f5;font-family:'Helvetica Neue',Arial,sans-serif;">
+<div style="padding:40px 16px;">
+  <div style="max-width:520px;margin:0 auto;border-radius:14px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,0.10);">
+    <div style="background:#1e2227;padding:32px 40px;text-align:center;">
+      <h1 style="margin:0;color:#fff;font-size:20px;">SC POS</h1>
+      <p style="margin:6px 0 0;color:#9aa0a6;font-size:13px;">Cuenta registrada</p>
+    </div>
+    <div style="background:#fff;padding:40px;">
+      <p style="margin:0 0 16px;font-size:15px;color:#333;">Hola,</p>
+      <p style="margin:0 0 22px;font-size:14px;color:#555;line-height:1.6;">
+        Registramos <strong>${razon_social}</strong> en SC POS. ${estadoTexto}
+      </p>
+      <table style="width:100%;border-collapse:collapse;margin-bottom:24px;">
+        <tr><td style="padding:9px 0;font-size:14px;color:#888;border-bottom:1px solid #f5f5f5;">Plan</td><td style="padding:9px 0;font-size:14px;font-weight:700;color:#1a1a1a;text-align:right;border-bottom:1px solid #f5f5f5;">${plan}</td></tr>
+        <tr><td style="padding:9px 0;font-size:14px;color:#888;border-bottom:1px solid #f5f5f5;">Mensualidad</td><td style="padding:9px 0;font-size:14px;font-weight:700;color:#1a1a1a;text-align:right;border-bottom:1px solid #f5f5f5;">$${Number(precio_mensual || 0).toLocaleString("es-MX")} MXN</td></tr>
+        <tr><td style="padding:9px 0;font-size:14px;color:#888;border-bottom:1px solid #f5f5f5;">Limites</td><td style="padding:9px 0;font-size:14px;font-weight:700;color:#1a1a1a;text-align:right;border-bottom:1px solid #f5f5f5;">${limite_sucursales} suc. / ${limite_usuarios} usuarios</td></tr>
+      </table>
+      <div style="background:#f8f9fa;border-left:4px solid #1e2227;border-radius:0 8px 8px 0;padding:12px 16px;">
+        <p style="margin:0;font-size:13px;color:#444;">Para pagar sin comision de tarjeta, usa transferencia SPEI con el concepto que aparece en tu pantalla de Plan y pago.</p>
+      </div>
+    </div>
+    <div style="background:#f8f9fa;border-top:1px solid #e8e8e8;padding:18px 40px;text-align:center;">
+      <p style="margin:0;font-size:12px;color:#aaa;">SC POS</p>
+    </div>
+  </div>
+</div>
+</body></html>`,
+  });
+};
+
+export const notificarEmpresaSuspendida = async ({ destinatario, razon_social, motivo }) => {
+  if (!process.env.BREVO_API_KEY) return;
+  const motivoHtml = motivo
+    ? `<p style="margin:12px 0 0;font-size:13px;color:#777;"><strong>Nota:</strong> ${motivo}</p>`
+    : "";
+  await enviarBrevo({
+    to: destinatario,
+    subject: "Cuenta suspendida en SC POS",
+    html: `<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8"></head>
+<body style="margin:0;padding:0;background:#f0f2f5;font-family:'Helvetica Neue',Arial,sans-serif;">
+<div style="padding:40px 16px;"><div style="max-width:520px;margin:0 auto;border-radius:14px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,0.10);">
+  <div style="background:#1e2227;padding:32px 40px;text-align:center;"><h1 style="margin:0;color:#fff;font-size:20px;">SC POS</h1></div>
+  <div style="background:#fff;padding:40px;">
+    <p style="margin:0 0 16px;font-size:15px;color:#333;">La cuenta de <strong>${razon_social}</strong> fue suspendida.</p>
+    <p style="margin:0;font-size:14px;color:#555;line-height:1.6;">Contacta al soporte de SC POS para revisar el estado de servicio o pago.</p>
+    ${motivoHtml}
+  </div>
+  <div style="background:#f8f9fa;border-top:1px solid #e8e8e8;padding:18px 40px;text-align:center;"><p style="margin:0;font-size:12px;color:#aaa;">SC POS</p></div>
+</div></div>
 </body></html>`,
   });
 };
