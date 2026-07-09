@@ -1,4 +1,4 @@
-import sequelize from '../config/database.js';
+﻿import sequelize from '../config/database.js';
 import { QueryTypes } from 'sequelize';
 import { filtroEmpresa } from '../utils/filtros.js';
 import { rangoFechasReporte } from '../utils/fechas.js';
@@ -199,6 +199,278 @@ export const getReporteInventario = async (req, res) => {
     }
 };
 
+const numero = (valor) => Number(valor || 0);
+
+const construirReporteDiario = async (req) => {
+    const { fechaInicio, fechaFin } = req.body;
+    const rango = rangoFechasReporte(fechaInicio, fechaFin);
+    const baseReplacements = { inicio: rango.inicio, fin: rango.fin };
+
+    const { clausula: filtroSucursales, params: paramsSucursales } = filtroEmpresa(req.usuario, 's.sucursal_id', 's', req.body);
+    const { clausula: filtroVentas, params: paramsVentas } = filtroEmpresa(req.usuario, 'v.sucursal_id', 's', req.body);
+    const { clausula: filtroCaja, params: paramsCaja } = filtroEmpresa(req.usuario, 'c.sucursal_id', 's', req.body);
+    const { clausula: filtroCompras, params: paramsCompras } = filtroEmpresa(req.usuario, 'co.sucursal_id', 's', req.body);
+    const { clausula: filtroDevoluciones, params: paramsDevoluciones } = filtroEmpresa(req.usuario, 'd.sucursal_id', 's', req.body);
+
+    const sucursales = await sequelize.query(`
+        SELECT s.sucursal_id, s.nombre AS nombre_sucursal
+        FROM "sucursales" s
+        WHERE COALESCE(s.activa, true) = true
+        ${filtroSucursales}
+        ORDER BY s.nombre ASC
+    `, { replacements: paramsSucursales, type: QueryTypes.SELECT });
+
+    const ventas = await sequelize.query(`
+        SELECT
+            s.sucursal_id,
+            s.nombre AS nombre_sucursal,
+            COUNT(v.venta_id)::int AS conteo_ventas,
+            COALESCE(SUM(v.total), 0) AS total_ventas,
+            COALESCE(SUM(CASE WHEN LOWER(COALESCE(v.tipo_pago, 'efectivo')) = 'efectivo' THEN v.total ELSE 0 END), 0) AS total_efectivo,
+            COALESCE(SUM(CASE WHEN LOWER(COALESCE(v.tipo_pago, '')) = 'tarjeta' THEN v.total ELSE 0 END), 0) AS total_tarjeta,
+            COALESCE(SUM(CASE WHEN LOWER(COALESCE(v.tipo_pago, '')) = 'transferencia' THEN v.total ELSE 0 END), 0) AS total_transferencia,
+            COALESCE(SUM(CASE WHEN LOWER(COALESCE(v.tipo_pago, '')) = 'credito' THEN v.total ELSE 0 END), 0) AS total_credito,
+            COALESCE(SUM(CASE WHEN v.tipo_venta = 'Pedido' THEN 1 ELSE 0 END), 0)::int AS total_pedidos
+        FROM "ventas" v
+        LEFT JOIN "sucursales" s ON v.sucursal_id = s.sucursal_id
+        WHERE v.fecha BETWEEN :inicio AND :fin
+        ${filtroVentas}
+        GROUP BY s.sucursal_id, s.nombre
+    `, { replacements: { ...baseReplacements, ...paramsVentas }, type: QueryTypes.SELECT });
+
+    const cajas = await sequelize.query(`
+        SELECT
+            c.caja_id,
+            c.sucursal_id,
+            s.nombre AS nombre_sucursal,
+            c.fecha_apertura,
+            c.fecha_cierre,
+            c.monto_inicial,
+            c.monto_final,
+            u1.nombre AS abrio,
+            u2.nombre AS cerro,
+            (
+                c.monto_inicial
+                + COALESCE((SELECT SUM(v.total) FROM "ventas" v WHERE v.sucursal_id = c.sucursal_id AND v.fecha BETWEEN c.fecha_apertura AND COALESCE(c.fecha_cierre, :fin) AND LOWER(COALESCE(v.tipo_pago, 'efectivo')) = 'efectivo'), 0)
+                + COALESCE((SELECT SUM(m.monto) FROM "movimiento_caja" m WHERE m.caja_id = c.caja_id AND UPPER(m.tipo_movimiento) = 'INGRESO'), 0)
+                - COALESCE((SELECT SUM(m.monto) FROM "movimiento_caja" m WHERE m.caja_id = c.caja_id AND UPPER(m.tipo_movimiento) IN ('EGRESO', 'DEVOLUCION')), 0)
+            ) AS monto_esperado,
+            CASE WHEN c.monto_final IS NULL THEN NULL ELSE (
+                c.monto_final - (
+                    c.monto_inicial
+                    + COALESCE((SELECT SUM(v.total) FROM "ventas" v WHERE v.sucursal_id = c.sucursal_id AND v.fecha BETWEEN c.fecha_apertura AND COALESCE(c.fecha_cierre, :fin) AND LOWER(COALESCE(v.tipo_pago, 'efectivo')) = 'efectivo'), 0)
+                    + COALESCE((SELECT SUM(m.monto) FROM "movimiento_caja" m WHERE m.caja_id = c.caja_id AND UPPER(m.tipo_movimiento) = 'INGRESO'), 0)
+                    - COALESCE((SELECT SUM(m.monto) FROM "movimiento_caja" m WHERE m.caja_id = c.caja_id AND UPPER(m.tipo_movimiento) IN ('EGRESO', 'DEVOLUCION')), 0)
+                )
+            ) END AS diferencia
+        FROM "caja" c
+        LEFT JOIN "usuarios" u1 ON c.usuario_apertura_id = u1.usuario_id
+        LEFT JOIN "usuarios" u2 ON c.usuario_cierre_id = u2.usuario_id
+        LEFT JOIN "sucursales" s ON c.sucursal_id = s.sucursal_id
+        WHERE c.fecha_apertura BETWEEN :inicio AND :fin
+        ${filtroCaja}
+        ORDER BY s.nombre ASC, c.fecha_apertura ASC
+    `, { replacements: { ...baseReplacements, ...paramsCaja }, type: QueryTypes.SELECT });
+
+    const movimientos = await sequelize.query(`
+        SELECT
+            m.movimiento_caja_id AS movimiento_id,
+            c.sucursal_id,
+            s.nombre AS nombre_sucursal,
+            m.fecha,
+            m.tipo_movimiento,
+            m.monto,
+            m.concepto,
+            u.nombre AS usuario
+        FROM "movimiento_caja" m
+        LEFT JOIN "caja" c ON m.caja_id = c.caja_id
+        LEFT JOIN "usuarios" u ON m.usuario_id = u.usuario_id
+        LEFT JOIN "sucursales" s ON c.sucursal_id = s.sucursal_id
+        WHERE m.fecha BETWEEN :inicio AND :fin
+        ${filtroCaja}
+        ORDER BY s.nombre ASC, m.fecha ASC
+    `, { replacements: { ...baseReplacements, ...paramsCaja }, type: QueryTypes.SELECT });
+
+    const compras = await sequelize.query(`
+        SELECT
+            s.sucursal_id,
+            s.nombre AS nombre_sucursal,
+            COUNT(co.compra_id)::int AS conteo_compras,
+            COALESCE(SUM(co.total), 0) AS total_compras
+        FROM "compras" co
+        LEFT JOIN "sucursales" s ON co.sucursal_id = s.sucursal_id
+        WHERE co.fecha BETWEEN :inicio AND :fin
+        ${filtroCompras}
+        GROUP BY s.sucursal_id, s.nombre
+    `, { replacements: { ...baseReplacements, ...paramsCompras }, type: QueryTypes.SELECT });
+
+    const devoluciones = await sequelize.query(`
+        SELECT
+            s.sucursal_id,
+            s.nombre AS nombre_sucursal,
+            COUNT(d.devolucion_id)::int AS conteo_devoluciones,
+            COALESCE(SUM(d.total_devuelto), 0) AS total_devoluciones
+        FROM "devoluciones" d
+        LEFT JOIN "sucursales" s ON d.sucursal_id = s.sucursal_id
+        WHERE d.fecha BETWEEN :inicio AND :fin
+        ${filtroDevoluciones}
+        GROUP BY s.sucursal_id, s.nombre
+    `, { replacements: { ...baseReplacements, ...paramsDevoluciones }, type: QueryTypes.SELECT });
+
+    const cfdis = await sequelize.query(`
+        SELECT
+            s.sucursal_id,
+            s.nombre AS nombre_sucursal,
+            COUNT(cf.cfdi_id)::int AS total_cfdi,
+            COALESCE(SUM(CASE WHEN cf.estado = 'PENDIENTE' THEN 1 ELSE 0 END), 0)::int AS cfdi_pendientes,
+            COALESCE(SUM(CASE WHEN cf.estado = 'TIMBRADO' THEN 1 ELSE 0 END), 0)::int AS cfdi_timbrados,
+            COALESCE(SUM(CASE WHEN cf.estado = 'CANCELADO' THEN 1 ELSE 0 END), 0)::int AS cfdi_cancelados
+        FROM "cfdi_ventas" cf
+        LEFT JOIN "ventas" v ON cf.venta_id = v.venta_id
+        LEFT JOIN "sucursales" s ON v.sucursal_id = s.sucursal_id
+        WHERE COALESCE(cf.creado_en, v.fecha) BETWEEN :inicio AND :fin
+        ${filtroVentas}
+        GROUP BY s.sucursal_id, s.nombre
+    `, { replacements: { ...baseReplacements, ...paramsVentas }, type: QueryTypes.SELECT });
+
+    const crearSucursal = (row) => ({
+        sucursal_id: row.sucursal_id,
+        nombre_sucursal: row.nombre_sucursal || 'Sin sucursal',
+        ventas: {
+            totalVentas: 0,
+            conteoVentas: 0,
+            totalEfectivo: 0,
+            totalTarjeta: 0,
+            totalTransferencia: 0,
+            totalCredito: 0,
+            totalPedidos: 0,
+            ticketPromedio: 0
+        },
+        compras: { totalCompras: 0, conteoCompras: 0 },
+        devoluciones: { totalDevoluciones: 0, conteoDevoluciones: 0 },
+        cfdi: { totalCfdi: 0, cfdiPendientes: 0, cfdiTimbrados: 0, cfdiCancelados: 0 },
+        resultado: { ingresosCaja: 0, egresosCaja: 0, efectivoEsperado: 0, diferenciaTotal: 0, resultadoOperativo: 0 },
+        cajas: [],
+        movimientos: []
+    });
+
+    const porSucursal = new Map();
+    const asegurarSucursal = (row) => {
+        const id = row.sucursal_id || 0;
+        if (!porSucursal.has(id)) porSucursal.set(id, crearSucursal({ ...row, sucursal_id: id }));
+        return porSucursal.get(id);
+    };
+
+    sucursales.forEach(asegurarSucursal);
+
+    ventas.forEach(row => {
+        const sucursal = asegurarSucursal(row);
+        sucursal.ventas = {
+            totalVentas: numero(row.total_ventas),
+            conteoVentas: numero(row.conteo_ventas),
+            totalEfectivo: numero(row.total_efectivo),
+            totalTarjeta: numero(row.total_tarjeta),
+            totalTransferencia: numero(row.total_transferencia),
+            totalCredito: numero(row.total_credito),
+            totalPedidos: numero(row.total_pedidos),
+            ticketPromedio: numero(row.conteo_ventas) > 0 ? numero(row.total_ventas) / numero(row.conteo_ventas) : 0
+        };
+    });
+
+    compras.forEach(row => {
+        const sucursal = asegurarSucursal(row);
+        sucursal.compras = { totalCompras: numero(row.total_compras), conteoCompras: numero(row.conteo_compras) };
+    });
+
+    devoluciones.forEach(row => {
+        const sucursal = asegurarSucursal(row);
+        sucursal.devoluciones = { totalDevoluciones: numero(row.total_devoluciones), conteoDevoluciones: numero(row.conteo_devoluciones) };
+    });
+
+    cfdis.forEach(row => {
+        const sucursal = asegurarSucursal(row);
+        sucursal.cfdi = {
+            totalCfdi: numero(row.total_cfdi),
+            cfdiPendientes: numero(row.cfdi_pendientes),
+            cfdiTimbrados: numero(row.cfdi_timbrados),
+            cfdiCancelados: numero(row.cfdi_cancelados)
+        };
+    });
+
+    cajas.forEach(row => {
+        const sucursal = asegurarSucursal(row);
+        sucursal.cajas.push({
+            caja_id: row.caja_id,
+            fecha_apertura: row.fecha_apertura,
+            fecha_cierre: row.fecha_cierre,
+            monto_inicial: numero(row.monto_inicial),
+            monto_final: row.monto_final === null ? null : numero(row.monto_final),
+            monto_esperado: numero(row.monto_esperado),
+            diferencia: row.diferencia === null ? null : numero(row.diferencia),
+            abrio: row.abrio,
+            cerro: row.cerro,
+            nombre_sucursal: row.nombre_sucursal
+        });
+    });
+
+    movimientos.forEach(row => {
+        const sucursal = asegurarSucursal(row);
+        sucursal.movimientos.push({
+            movimiento_id: row.movimiento_id,
+            fecha: row.fecha,
+            tipo_movimiento: row.tipo_movimiento,
+            monto: numero(row.monto),
+            concepto: row.concepto,
+            usuario: row.usuario,
+            nombre_sucursal: row.nombre_sucursal
+        });
+    });
+
+    const sucursalesReporte = Array.from(porSucursal.values()).map(sucursal => {
+        const ingresosManuales = sucursal.movimientos
+            .filter(m => String(m.tipo_movimiento).toUpperCase() === 'INGRESO')
+            .reduce((sum, m) => sum + numero(m.monto), 0);
+        const egresosManuales = sucursal.movimientos
+            .filter(m => String(m.tipo_movimiento).toUpperCase() === 'EGRESO')
+            .reduce((sum, m) => sum + numero(m.monto), 0);
+        sucursal.resultado.ingresosCaja = sucursal.ventas.totalEfectivo + ingresosManuales;
+        sucursal.resultado.egresosCaja = sucursal.compras.totalCompras + sucursal.devoluciones.totalDevoluciones + egresosManuales;
+        sucursal.resultado.efectivoEsperado = sucursal.cajas.reduce((sum, c) => sum + numero(c.monto_esperado), 0);
+        sucursal.resultado.diferenciaTotal = sucursal.cajas.reduce((sum, c) => sum + numero(c.diferencia), 0);
+        sucursal.resultado.resultadoOperativo = sucursal.ventas.totalVentas - sucursal.compras.totalCompras - sucursal.devoluciones.totalDevoluciones;
+        return sucursal;
+    });
+
+    const totales = sucursalesReporte.reduce((acc, sucursal) => {
+        acc.totalVentas += sucursal.ventas.totalVentas;
+        acc.conteoVentas += sucursal.ventas.conteoVentas;
+        acc.totalCompras += sucursal.compras.totalCompras;
+        acc.totalDevoluciones += sucursal.devoluciones.totalDevoluciones;
+        acc.totalCfdi += sucursal.cfdi.totalCfdi;
+        acc.ingresosCaja += sucursal.resultado.ingresosCaja;
+        acc.egresosCaja += sucursal.resultado.egresosCaja;
+        acc.efectivoEsperado += sucursal.resultado.efectivoEsperado;
+        acc.diferenciaTotal += sucursal.resultado.diferenciaTotal;
+        acc.resultadoOperativo += sucursal.resultado.resultadoOperativo;
+        return acc;
+    }, { totalVentas: 0, conteoVentas: 0, totalCompras: 0, totalDevoluciones: 0, totalCfdi: 0, ingresosCaja: 0, egresosCaja: 0, efectivoEsperado: 0, diferenciaTotal: 0, resultadoOperativo: 0 });
+
+    return {
+        fechaInicio,
+        fechaFin,
+        sucursales: sucursalesReporte,
+        totales
+    };
+};
+
+export const getReporteDiario = async (req, res) => {
+    try {
+        const reporte = await construirReporteDiario(req);
+        res.json(reporte);
+    } catch (error) {
+        res.status(500).json({ error: 'Error al generar reporte diario' });
+    }
+};
 export const getDatosGraficas = async (req, res) => {
     try {
         const { fechaInicio, fechaFin } = req.body;
@@ -355,6 +627,86 @@ export const exportarExcel = async (req, res) => {
                 { header: 'Sucursal',   key: 'sucursal',         width: 20 }
             ];
             hojaNombre = 'Inventario';
+        } else if (tipo === 'compras') {
+            const { clausula, params } = filtroEmpresa(req.usuario, 'co.sucursal_id', 's', req.body);
+            filas = await sequelize.query(`
+                SELECT TO_CHAR(co.fecha,'DD/MM/YYYY HH24:MI') as fecha,
+                    co.folio, p.nombre as proveedor, co.total, co.notas, s.nombre as sucursal
+                FROM "compras" co
+                LEFT JOIN "proveedores" p ON co.proveedor_id = p.proveedor_id
+                LEFT JOIN "sucursales" s ON co.sucursal_id = s.sucursal_id
+                WHERE co.fecha BETWEEN :inicio AND :fin ${clausula}
+                ORDER BY co.fecha DESC
+            `, { replacements: { ...replacements, ...params }, type: QueryTypes.SELECT });
+            columnas = [
+                { header: 'Fecha', key: 'fecha', width: 18 },
+                { header: 'Folio', key: 'folio', width: 16 },
+                { header: 'Proveedor', key: 'proveedor', width: 26 },
+                { header: 'Total', key: 'total', width: 14 },
+                { header: 'Notas', key: 'notas', width: 30 },
+                { header: 'Sucursal', key: 'sucursal', width: 20 }
+            ];
+            hojaNombre = 'Compras';
+
+        } else if (tipo === 'facturas') {
+            const { clausula, params } = filtroEmpresa(req.usuario, 'v.sucursal_id', 's', req.body);
+            filas = await sequelize.query(`
+                SELECT v.folio as folio_venta, TO_CHAR(v.fecha,'DD/MM/YYYY HH24:MI') as fecha_venta,
+                    cf.receptor_rfc, cf.receptor_nombre, v.total as total_venta, cf.estado, cf.cfdi_uuid, s.nombre as sucursal
+                FROM "cfdi_ventas" cf
+                LEFT JOIN "ventas" v ON cf.venta_id = v.venta_id
+                LEFT JOIN "sucursales" s ON v.sucursal_id = s.sucursal_id
+                WHERE COALESCE(cf.creado_en, v.fecha) BETWEEN :inicio AND :fin ${clausula}
+                ORDER BY COALESCE(cf.creado_en, v.fecha) DESC
+            `, { replacements: { ...replacements, ...params }, type: QueryTypes.SELECT });
+            columnas = [
+                { header: 'Folio venta', key: 'folio_venta', width: 16 },
+                { header: 'Fecha', key: 'fecha_venta', width: 18 },
+                { header: 'RFC receptor', key: 'receptor_rfc', width: 16 },
+                { header: 'Receptor', key: 'receptor_nombre', width: 32 },
+                { header: 'Total', key: 'total_venta', width: 14 },
+                { header: 'Estado', key: 'estado', width: 14 },
+                { header: 'UUID', key: 'cfdi_uuid', width: 38 },
+                { header: 'Sucursal', key: 'sucursal', width: 20 }
+            ];
+            hojaNombre = 'Facturas';
+
+        } else if (tipo === 'diario') {
+            const reporte = await construirReporteDiario(req);
+            filas = reporte.sucursales.map(sucursal => ({
+                sucursal: sucursal.nombre_sucursal,
+                ventas_total: sucursal.ventas.totalVentas,
+                ventas_conteo: sucursal.ventas.conteoVentas,
+                efectivo: sucursal.ventas.totalEfectivo,
+                tarjeta: sucursal.ventas.totalTarjeta,
+                transferencia: sucursal.ventas.totalTransferencia,
+                credito: sucursal.ventas.totalCredito,
+                compras_total: sucursal.compras.totalCompras,
+                compras_conteo: sucursal.compras.conteoCompras,
+                devoluciones_total: sucursal.devoluciones.totalDevoluciones,
+                facturas: sucursal.cfdi.totalCfdi,
+                efectivo_esperado: sucursal.resultado.efectivoEsperado,
+                diferencia_caja: sucursal.resultado.diferenciaTotal,
+                resultado_operativo: sucursal.resultado.resultadoOperativo
+            }));
+            columnas = [
+                { header: 'Sucursal', key: 'sucursal', width: 24 },
+                { header: 'Ventas total', key: 'ventas_total', width: 16 },
+                { header: 'Ventas conteo', key: 'ventas_conteo', width: 14 },
+                { header: 'Efectivo', key: 'efectivo', width: 14 },
+                { header: 'Tarjeta', key: 'tarjeta', width: 14 },
+                { header: 'Transferencia', key: 'transferencia', width: 16 },
+                { header: 'Credito', key: 'credito', width: 14 },
+                { header: 'Compras total', key: 'compras_total', width: 16 },
+                { header: 'Compras conteo', key: 'compras_conteo', width: 14 },
+                { header: 'Devoluciones', key: 'devoluciones_total', width: 16 },
+                { header: 'Facturas', key: 'facturas', width: 12 },
+                { header: 'Efectivo esperado', key: 'efectivo_esperado', width: 18 },
+                { header: 'Diferencia caja', key: 'diferencia_caja', width: 16 },
+                { header: 'Resultado operativo', key: 'resultado_operativo', width: 20 }
+            ];
+            hojaNombre = 'Diario';
+
         } else {
             return res.status(400).json({ error: 'Tipo de reporte no valido' });
         }
@@ -394,6 +746,9 @@ export const exportarExcel = async (req, res) => {
         res.status(500).json({ error: 'Error al exportar Excel: ' + error.message });
     }
 };
+
+
+
 
 
 
