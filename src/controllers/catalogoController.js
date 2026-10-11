@@ -1,9 +1,20 @@
 import { Op } from 'sequelize';
 import CatalogoMaestro from '../models/CatalogoMaestro.js';
+import CatalogoGiro from '../models/CatalogoGiro.js';
+import Empresa from '../models/EmpresaModel.js';
 import Producto from '../models/Producto.js';
 import StockSucursal from '../models/StockSucursalModel.js';
 import Sucursal from '../models/SucursalModel.js';
 import { obtenerEmpresaId, responderErrorScope } from '../utils/scope.js';
+
+// Cada empresa ve solo los catalogos base de su giro; giro "general" ve todos.
+async function filtroGiro(req) {
+  const empresa = await Empresa.findByPk(obtenerEmpresaId(req.usuario), { attributes: ['giro'] });
+  const giro = empresa?.giro || 'general';
+  if (giro === 'general') return {};
+  const catalogos = await CatalogoGiro.findAll({ where: { giro }, attributes: ['catalogo_giro_id'] });
+  return { catalogo_giro_id: { [Op.in]: catalogos.map(c => c.catalogo_giro_id) } };
+}
 
 // GET /api/catalogo/buscar?q= — autocomplete para crear productos
 export const buscarCatalogo = async (req, res) => {
@@ -11,7 +22,7 @@ export const buscarCatalogo = async (req, res) => {
   if (!q || q.trim().length < 2) return res.json([]);
   try {
     const resultados = await CatalogoMaestro.findAll({
-      where: { nombre: { [Op.iLike]: `%${q.trim()}%` } },
+      where: { ...(await filtroGiro(req)), nombre: { [Op.iLike]: `%${q.trim()}%` } },
       limit: 10,
       order: [['nombre', 'ASC']]
     });
@@ -27,17 +38,17 @@ export const listarCatalogo = async (req, res) => {
   const empresa_id = obtenerEmpresaId(req.usuario);
   const offset = (Number(page) - 1) * Number(limit);
 
-  const where = {};
-  if (q.trim().length >= 2) {
-    where[Op.or] = [
-      { nombre:          { [Op.iLike]: `%${q.trim()}%` } },
-      { codigo_barras:   { [Op.iLike]: `%${q.trim()}%` } },
-      { categoria_sugerida: { [Op.iLike]: `%${q.trim()}%` } },
-    ];
-  }
-  if (categoria) where.categoria_sugerida = categoria;
-
   try {
+    const where = await filtroGiro(req);
+    if (q.trim().length >= 2) {
+      where[Op.or] = [
+        { nombre:          { [Op.iLike]: `%${q.trim()}%` } },
+        { codigo_barras:   { [Op.iLike]: `%${q.trim()}%` } },
+        { categoria_sugerida: { [Op.iLike]: `%${q.trim()}%` } },
+      ];
+    }
+    if (categoria) where.categoria_sugerida = categoria;
+
     const { count, rows } = await CatalogoMaestro.findAndCountAll({
       where, limit: Number(limit), offset, order: [['nombre', 'ASC']]
     });
@@ -65,7 +76,7 @@ export const categoriasCatalogo = async (req, res) => {
   try {
     const rows = await CatalogoMaestro.findAll({
       attributes: ['categoria_sugerida'],
-      where: { categoria_sugerida: { [Op.ne]: null } },
+      where: { ...(await filtroGiro(req)), categoria_sugerida: { [Op.ne]: null } },
       group: ['categoria_sugerida'],
       order: [['categoria_sugerida', 'ASC']],
     });
@@ -85,7 +96,7 @@ export const adoptarProductos = async (req, res) => {
 
   try {
     const [items, sucursales, existentes] = await Promise.all([
-      CatalogoMaestro.findAll({ where: { catalogo_id: { [Op.in]: ids } } }),
+      CatalogoMaestro.findAll({ where: { ...(await filtroGiro(req)), catalogo_id: { [Op.in]: ids } } }),
       Sucursal.findAll({ where: { empresa_id }, attributes: ['sucursal_id'] }),
       Producto.findAll({ where: { empresa_id }, attributes: ['codigo_barras'] }),
     ]);
@@ -115,7 +126,7 @@ export const adoptarTodo = async (req, res) => {
 
   try {
     const [items, sucursales, existentes] = await Promise.all([
-      CatalogoMaestro.findAll(),
+      CatalogoMaestro.findAll({ where: await filtroGiro(req) }),
       Sucursal.findAll({ where: { empresa_id }, attributes: ['sucursal_id'] }),
       Producto.findAll({ where: { empresa_id }, attributes: ['codigo_barras'] }),
     ]);
@@ -157,6 +168,13 @@ function mapItemToProducto(item, empresa_id) {
     clave_sat:        item.clave_sat_sugerida  || '01010101',
     clave_unidad_sat: item.unidad_sat_sugerida || 'H87',
     objeto_imp:       item.objeto_imp          || '02',
+    unidad_venta:     item.unidad_venta        || 'pieza',
+    precio_compra:    item.precio_compra ?? null,
+    marca:            item.marca  || null,
+    modelo:           item.modelo || null,
+    talla:            item.talla  || null,
+    color:            item.color  || null,
+    requiere_receta:  item.requiere_receta === true,
     activo:           true,
   };
 }

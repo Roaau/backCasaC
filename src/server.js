@@ -73,6 +73,7 @@ import "./models/ClienteFiscal.js";
 import "./models/CfdiVenta.js";
 import "./models/ConfiguracionFiscal.js";
 import "./models/CodigoInvitacion.js";
+import "./models/CatalogoGiro.js";
 import "./models/CatalogoMaestro.js";
 import "./models/SolicitudRegistro.js";
 import "./models/SolicitudReset.js";

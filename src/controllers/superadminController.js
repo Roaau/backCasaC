@@ -4,13 +4,15 @@ import Usuario from "../models/Usuario.js";
 import Venta from "../models/Venta.js";
 import MovimientoInventario from "../models/MovimientoInventario.js";
 import CatalogoMaestro from "../models/CatalogoMaestro.js";
+import CatalogoGiro from "../models/CatalogoGiro.js";
 import Auditoria from "../models/Auditoria.js";
 import { notificarEmpresaAprobada, notificarEmpresaRechazada, notificarEmpresaSuspendida } from "../services/emailService.js";
 import { Op } from "sequelize";
 import sequelize from "../config/database.js";
 import multer from "multer";
-import XLSX from "xlsx";
 import { registrarAuditoria } from "../utils/auditoria.js";
+import { leerFilasInventario } from "../utils/importarExcel.js";
+import { normalizarGiro } from "../utils/giros.js";
 
 const uploadCatalogo = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } }).single('archivo');
 
@@ -435,62 +437,114 @@ export const actualizarComercial = async (req, res) => {
   }
 };
 
-// GET /api/superadmin/catalogo/stats
-export const statsCatalogo = async (req, res) => {
+// ── Catalogos base por giro ──────────────────────────────────────────────────
+
+const entero = (n) => (n === null || n === undefined ? null : Math.round(n));
+
+// Fila del lector flexible de Excel (utils/importarExcel.js) -> producto del catalogo base
+export const filaACatalogo = (datos, catalogo_giro_id) => ({
+  catalogo_giro_id,
+  codigo_barras:       datos.codigo_barras ? String(datos.codigo_barras).slice(0, 50) : null,
+  nombre:              String(datos.nombre).slice(0, 200),
+  descripcion:         datos.descripcion || null,
+  categoria_sugerida:  datos.categoria || 'Varios',
+  precio_menudeo:      datos.precio_menudeo ?? 0,
+  precio_mayoreo:      datos.precio_mayoreo ?? 0,
+  precio_oferta:       datos.precio_oferta ?? 0,
+  precio_compra:       datos.precio_compra ?? null,
+  stock_minimo:        entero(datos.stock_minimo) ?? 0,
+  minimo_mayoreo:      entero(datos.minimo_mayoreo),
+  unidad_venta:        datos.unidad_venta || 'pieza',
+  marca:               datos.marca || null,
+  modelo:              datos.modelo || null,
+  talla:               datos.talla || null,
+  color:               datos.color || null,
+  requiere_receta:     datos.requiere_receta === true,
+  clave_sat_sugerida:  datos.clave_sat || '01010101',
+  unidad_sat_sugerida: datos.clave_unidad_sat || 'H87',
+  objeto_imp:          datos.objeto_imp || '02',
+});
+
+// GET /api/superadmin/catalogos
+export const listarCatalogos = async (req, res) => {
   try {
-    const total = await CatalogoMaestro.count();
-    const cats  = await CatalogoMaestro.count({ distinct: true, col: 'categoria_sugerida' });
-    res.json({ total, categorias: cats });
+    const catalogos = await CatalogoGiro.findAll({ order: [['giro', 'ASC'], ['nombre', 'ASC']] });
+    res.json(catalogos);
   } catch {
-    res.status(500).json({ error: 'Error al obtener stats del catálogo' });
+    res.status(500).json({ error: 'Error al listar catálogos' });
   }
 };
 
-// POST /api/superadmin/catalogo/importar  (multipart: archivo .xlsx)
-export const importarCatalogo = (req, res) => {
+// POST /api/superadmin/catalogos  (multipart: archivo .xlsx/.xls/.csv, nombre, giro)
+// Cada Excel crea un catalogo nuevo; no toca los demas.
+export const subirCatalogo = (req, res) => {
   uploadCatalogo(req, res, async (err) => {
-    if (err) return res.status(400).json({ error: 'Error al recibir el archivo' });
+    if (err) return res.status(400).json({ error: 'Error al recibir el archivo (maximo 20 MB)' });
     if (!req.file) return res.status(400).json({ error: 'No se envió ningún archivo' });
 
+    const giro   = normalizarGiro(req.body?.giro);
+    const nombre = String(req.body?.nombre || '').trim().slice(0, 120)
+      || req.file.originalname.replace(/\.[^.]+$/, '').slice(0, 120);
+
+    let filas, reconocidas, ignoradas;
     try {
-      const wb   = XLSX.read(req.file.buffer, { type: 'buffer' });
-      const ws   = wb.Sheets[wb.SheetNames[0]];
-      const rows = XLSX.utils.sheet_to_json(ws, { defval: null });
-
-      const registros = rows
-        .filter(row => row.nombre?.toString().trim())
-        .map(row => ({
-          codigo_barras:        row.codigo_barras?.toString().trim() || null,
-          nombre:               row.nombre.toString().trim(),
-          descripcion:          row.descripcion?.toString().trim()   || null,
-          categoria_sugerida:   row.categoria?.toString().trim()     || 'Varios',
-          precio_menudeo:       Number(row.precio_menudeo)   || 0,
-          precio_mayoreo:       Number(row.precio_mayoreo)   || 0,
-          precio_oferta:        Number(row.precio_oferta)    || 0,
-          stock_minimo:         Number(row.stock_minimo)     || 0,
-          minimo_mayoreo:       Number(row.minimo_mayoreo)   || null,
-          clave_sat_sugerida:   row.clave_sat?.toString()    || '01010101',
-          unidad_sat_sugerida:  row.clave_unidad_sat?.toString() || 'H87',
-          objeto_imp:           row.objeto_imp?.toString()   || '02',
-        }));
-
-      // Reemplaza todo el catálogo de golpe
-      await CatalogoMaestro.destroy({ where: {}, truncate: true });
-      await CatalogoMaestro.bulkCreate(registros);
-
-      res.json({ mensaje: 'Catálogo importado', total: registros.length });
+      ({ filas, reconocidas, ignoradas } = leerFilasInventario(req.file.buffer));
     } catch (e) {
-      res.status(500).json({ error: 'Error al procesar el Excel', detalle: e.message });
+      return res.status(e.status || 400).json({ error: e.status ? e.message : 'No se pudo leer el archivo. Usa Excel (.xlsx, .xls) o CSV.' });
+    }
+
+    const validas = filas.filter(f => f.datos.nombre);
+    if (validas.length === 0) return res.status(400).json({ error: 'El archivo no tiene productos con nombre debajo de los encabezados' });
+    if (validas.length > 50000) return res.status(400).json({ error: 'Maximo 50,000 productos por catálogo. Divide el Excel en partes.' });
+
+    const t = await sequelize.transaction();
+    try {
+      const catalogo = await CatalogoGiro.create({
+        nombre, giro, archivo: req.file.originalname.slice(0, 255), total_productos: validas.length
+      }, { transaction: t });
+
+      const registros = validas.map(f => filaACatalogo(f.datos, catalogo.catalogo_giro_id));
+      for (let i = 0; i < registros.length; i += 2000) {
+        await CatalogoMaestro.bulkCreate(registros.slice(i, i + 2000), { transaction: t });
+      }
+      await t.commit();
+
+      await registrarAuditoria(req, {
+        accion: 'SUPERADMIN_CATALOGO_SUBIR', entidad: 'catalogos_giro', entidad_id: catalogo.catalogo_giro_id,
+        detalle: { nombre, giro, archivo: catalogo.archivo, total: validas.length }
+      });
+      res.status(201).json({
+        mensaje: 'Catálogo importado', catalogo,
+        total: validas.length, omitidas: filas.length - validas.length, reconocidas, ignoradas
+      });
+    } catch (e) {
+      await t.rollback();
+      res.status(500).json({ error: 'Error al guardar el catálogo', detalle: e.message });
     }
   });
 };
 
-// DELETE /api/superadmin/catalogo/limpiar
-export const limpiarCatalogo = async (req, res) => {
+// DELETE /api/superadmin/catalogos/:id  — borra el catalogo y sus productos.
+// Los productos que las empresas ya adoptaron son copias y no se tocan.
+export const eliminarCatalogo = async (req, res) => {
+  const t = await sequelize.transaction();
   try {
-    await CatalogoMaestro.destroy({ where: {}, truncate: true });
-    res.json({ mensaje: 'Catálogo limpiado' });
-  } catch {
-    res.status(500).json({ error: 'Error al limpiar catálogo' });
+    const catalogo = await CatalogoGiro.findByPk(req.params.id, { transaction: t });
+    if (!catalogo) {
+      await t.rollback();
+      return res.status(404).json({ error: 'Catálogo no encontrado' });
+    }
+    const borrados = await CatalogoMaestro.destroy({ where: { catalogo_giro_id: catalogo.catalogo_giro_id }, transaction: t });
+    await catalogo.destroy({ transaction: t });
+    await t.commit();
+
+    await registrarAuditoria(req, {
+      accion: 'SUPERADMIN_CATALOGO_ELIMINAR', entidad: 'catalogos_giro', entidad_id: catalogo.catalogo_giro_id,
+      detalle: { nombre: catalogo.nombre, giro: catalogo.giro, productos: borrados }
+    });
+    res.json({ mensaje: 'Catálogo eliminado', productos: borrados });
+  } catch (e) {
+    await t.rollback();
+    res.status(500).json({ error: 'Error al eliminar catálogo', detalle: e.message });
   }
 };

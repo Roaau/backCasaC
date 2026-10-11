@@ -10,9 +10,9 @@ import {
   actualizarComercial,
   toggleSucursal,
   toggleUsuario,
-  statsCatalogo,
-  importarCatalogo,
-  limpiarCatalogo,
+  listarCatalogos,
+  subirCatalogo,
+  eliminarCatalogo,
   listarAuditoriaSuperadmin,
 } from '../controllers/superadminController.js';
 
@@ -30,8 +30,8 @@ router.put('/sucursales/:id/toggle', toggleSucursal);
 router.put('/usuarios/:id/toggle',   toggleUsuario);
 router.get('/auditoria',             listarAuditoriaSuperadmin);
 
-router.get('/catalogo/stats',     statsCatalogo);
-router.post('/catalogo/importar', importarCatalogo);
-router.delete('/catalogo/limpiar', limpiarCatalogo);
+router.get('/catalogos',        listarCatalogos);
+router.post('/catalogos',       subirCatalogo);
+router.delete('/catalogos/:id', eliminarCatalogo);
 
 export default router;

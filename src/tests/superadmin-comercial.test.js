@@ -38,6 +38,11 @@ jest.mock('../models/CatalogoMaestro.js', () => ({
   default: { count: jest.fn(), destroy: jest.fn(), bulkCreate: jest.fn() }
 }));
 
+jest.mock('../models/CatalogoGiro.js', () => ({
+  __esModule: true,
+  default: { findAll: jest.fn(), findByPk: jest.fn(), create: jest.fn() }
+}));
+
 jest.mock('../models/Auditoria.js', () => ({
   __esModule: true,
   default: { findAll: jest.fn() }
