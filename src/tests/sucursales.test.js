@@ -1,6 +1,6 @@
 jest.mock('../models/SucursalModel.js', () => ({
   __esModule: true,
-  default: { findAll: jest.fn(), create: jest.fn(), update: jest.fn(), count: jest.fn() }
+  default: { findAll: jest.fn(), findOne: jest.fn(), create: jest.fn(), update: jest.fn(), count: jest.fn() }
 }));
 jest.mock('../models/EmpresaModel.js', () => ({
   __esModule: true,
@@ -18,6 +18,14 @@ jest.mock('../models/Producto.js', () => ({
   __esModule: true,
   default: { findAll: jest.fn() }
 }));
+jest.mock('../models/CajaModel.js', () => ({
+  __esModule: true,
+  default: { count: jest.fn() }
+}));
+jest.mock('../utils/auditoria.js', () => ({
+  __esModule: true,
+  registrarAuditoria: jest.fn()
+}));
 jest.mock('../config/database.js', () => ({
   __esModule: true,
   default: { transaction: jest.fn() }
@@ -28,7 +36,9 @@ const { default: Empresa } = require('../models/EmpresaModel.js');
 const { default: StockSucursal } = require('../models/StockSucursalModel.js');
 const { default: Producto } = require('../models/Producto.js');
 const { default: db } = require('../config/database.js');
-const { getSucursales, createSucursal, updateSucursal } = require('../controllers/sucursalesController.js');
+const { default: Usuario } = require('../models/Usuario.js');
+const { default: Caja } = require('../models/CajaModel.js');
+const { getSucursales, createSucursal, updateSucursal, eliminarSucursal } = require('../controllers/sucursalesController.js');
 
 const mockRes = () => {
   const res = {};
@@ -133,5 +143,62 @@ describe('Sucursales - seguridad multiempresa', () => {
     }), { where: { sucursal_id: '5', empresa_id: 10 } });
     expect(Sucursal.update.mock.calls[0][0]).not.toHaveProperty('empresa_id');
     expect(res.json).toHaveBeenCalledWith({ mensaje: 'Sucursal actualizada' });
+  });
+
+  describe('eliminar sucursal', () => {
+    const reqAdmin = () => ({ params: { id: '5' }, usuario: { empresa_id: 10, sucursal_id: 1, rol: 1 } });
+    let sucursal;
+
+    beforeEach(() => {
+      sucursal = { sucursal_id: 5, nombre: 'Norte', update: jest.fn() };
+      Sucursal.findOne.mockResolvedValue(sucursal);
+      Sucursal.count.mockResolvedValue(2);
+      Caja.count.mockResolvedValue(0);
+      Usuario.count.mockResolvedValue(0);
+    });
+
+    test('desactiva la sucursal en lugar de borrarla', async () => {
+      const res = mockRes();
+      await eliminarSucursal(reqAdmin(), res);
+      expect(Sucursal.findOne).toHaveBeenCalledWith({ where: { sucursal_id: '5', empresa_id: 10, activa: true } });
+      expect(sucursal.update).toHaveBeenCalledWith({ activa: false });
+      expect(res.json).toHaveBeenCalledWith({ mensaje: 'Sucursal eliminada' });
+    });
+
+    test('empleado no puede eliminar', async () => {
+      const res = mockRes();
+      await eliminarSucursal({ params: { id: '5' }, usuario: { empresa_id: 10, sucursal_id: 1, rol: 2 } }, res);
+      expect(res.status).toHaveBeenCalledWith(403);
+      expect(sucursal.update).not.toHaveBeenCalled();
+    });
+
+    test('no elimina la unica sucursal', async () => {
+      Sucursal.count.mockResolvedValue(1);
+      const res = mockRes();
+      await eliminarSucursal(reqAdmin(), res);
+      expect(res.status).toHaveBeenCalledWith(409);
+      expect(sucursal.update).not.toHaveBeenCalled();
+    });
+
+    test('no elimina con caja abierta ni con usuarios asignados', async () => {
+      Caja.count.mockResolvedValue(1);
+      let res = mockRes();
+      await eliminarSucursal(reqAdmin(), res);
+      expect(res.status).toHaveBeenCalledWith(409);
+
+      Caja.count.mockResolvedValue(0);
+      Usuario.count.mockResolvedValue(2);
+      res = mockRes();
+      await eliminarSucursal(reqAdmin(), res);
+      expect(res.status).toHaveBeenCalledWith(409);
+      expect(sucursal.update).not.toHaveBeenCalled();
+    });
+
+    test('sucursal de otra empresa responde 404', async () => {
+      Sucursal.findOne.mockResolvedValue(null);
+      const res = mockRes();
+      await eliminarSucursal(reqAdmin(), res);
+      expect(res.status).toHaveBeenCalledWith(404);
+    });
   });
 });
