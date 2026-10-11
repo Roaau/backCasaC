@@ -3,6 +3,7 @@ import sequelize from '../config/database.js';
 import Notificacion from '../models/Notificacion.js';
 import { resolverScopeSucursales, responderErrorScope } from '../utils/scope.js';
 import { registrarAuditoria } from '../utils/auditoria.js';
+import { fechaLocalISO } from '../utils/fechas.js';
 
 const severidadStock = (actual, minimo) => {
   const min = Number(minimo) || 5;
@@ -65,10 +66,44 @@ export async function generarNotificacionesEmpresa(req, scope) {
       tipo: 'stock_bajo',
       severidad,
       titulo: severidad === 'critica' ? 'Stock critico' : 'Stock bajo',
-      mensaje: `${p.nombre} tiene ${p.stock_actual} unidades en ${p.sucursal}. Minimo: ${p.stock_minimo}.`,
+      mensaje: `${p.nombre} tiene ${Number(p.stock_actual)} en existencia en ${p.sucursal}. Minimo: ${Number(p.stock_minimo)}.`,
       entidad: 'producto',
       entidad_id: String(p.producto_id),
       detalle: { producto: p.nombre, stock_actual: Number(p.stock_actual), stock_minimo: Number(p.stock_minimo), sucursal: p.sucursal }
+    });
+  }
+
+  // Caducidades (farmacia, abarrotes, cosmeticos...): caducados o que caducan en 30 dias con existencia
+  const hoy = fechaLocalISO();
+  const caducidadRows = await sequelize.query(`
+    SELECT p.producto_id, p.nombre, p.lote, p.fecha_caducidad,
+           ss.stock_actual, s.sucursal_id, s.nombre AS sucursal
+    FROM productos p
+    JOIN stock_sucursal ss ON ss.producto_id = p.producto_id
+    JOIN sucursales s ON s.sucursal_id = ss.sucursal_id
+    WHERE p.empresa_id = :empresa_id
+      AND p.activo = true
+      AND s.sucursal_id IN (:sucursalIds)
+      AND p.fecha_caducidad IS NOT NULL
+      AND p.fecha_caducidad <= (CAST(:hoy AS date) + INTERVAL '30 days')
+      AND COALESCE(ss.stock_actual, 0) > 0
+    ORDER BY p.fecha_caducidad ASC
+    LIMIT 40
+  `, { replacements: { empresa_id: empresaId, sucursalIds, hoy }, type: QueryTypes.SELECT });
+
+  for (const p of caducidadRows) {
+    const fecha = typeof p.fecha_caducidad === 'string' ? p.fecha_caducidad : fechaLocalISO(p.fecha_caducidad);
+    const caducado = fecha < hoy;
+    await upsertNotificacion({
+      empresa_id: empresaId,
+      sucursal_id: p.sucursal_id,
+      tipo: caducado ? 'producto_caducado' : 'por_caducar',
+      severidad: caducado ? 'critica' : 'alta',
+      titulo: caducado ? 'Producto caducado' : 'Producto por caducar',
+      mensaje: `${p.nombre}${p.lote ? ` (lote ${p.lote})` : ''} ${caducado ? 'caducó' : 'caduca'} el ${fecha}. Quedan ${Number(p.stock_actual)} en ${p.sucursal}.`,
+      entidad: 'producto',
+      entidad_id: String(p.producto_id),
+      detalle: { producto: p.nombre, lote: p.lote, fecha_caducidad: fecha, stock_actual: Number(p.stock_actual), sucursal: p.sucursal }
     });
   }
 

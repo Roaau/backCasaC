@@ -52,6 +52,7 @@ import onboardingRoutes from "./routes/onboardingRoutes.js";
 import notificacionesRoutes from "./routes/notificacionesRoutes.js";
 import cron from "node-cron";
 import { realizarBackup } from "./backup.js";
+import { cfdiHabilitado } from "./config/features.js";
 
 import "./models/CajaModel.js";
 import "./models/MovimientoCaja.js";
@@ -279,7 +280,11 @@ app.use("/api/reportes", verificarToken, verificarAdmin, reportesRoutes);
 app.use("/api/inventario", verificarToken, inventarioRoutes);
 app.use("/api/sat", verificarToken, satRoutes);
 app.use("/api/clientes-fiscales", verificarToken, clientesFiscalesRoutes);
-app.use("/api/cfdi", verificarToken, verificarAdmin, cfdiRoutes);
+if (cfdiHabilitado()) {
+  app.use("/api/cfdi", verificarToken, verificarAdmin, cfdiRoutes);
+} else {
+  app.use("/api/cfdi", (req, res) => res.status(404).json({ error: "La facturacion CFDI no esta habilitada" }));
+}
 app.use("/api/configuracion", verificarToken, verificarAdmin, configuracionRoutes);
 app.use("/api/empresas",     verificarToken, verificarAdmin, empresasRoutes);
 app.use("/api/sucursales",   verificarToken, sucursalesRoutes);
@@ -311,7 +316,9 @@ const PORT = process.env.PORT || 3000;
 try {
   await sequelize.authenticate();
   console.log("Conexion a PostgreSQL correcta.");
-  await sequelize.sync({ alter: process.env.NODE_ENV !== "production" });
+  // Los cambios de esquema van por migraciones. alter solo si se pide explicitamente,
+  // para no modificar la BD de produccion al correr el backend en local con DATABASE_URL de Supabase.
+  await sequelize.sync({ alter: process.env.DB_SYNC_ALTER === "true" });
   console.log("Modelos sincronizados.");
   // Columnas opcionales que pueden haber quedado NOT NULL en BD antigua
   await sequelize.query("ALTER TABLE IF EXISTS sucursales ALTER COLUMN cp_sat DROP NOT NULL").catch(() => {});

@@ -1,5 +1,6 @@
 import Empresa from '../models/EmpresaModel.js';
 import { obtenerEmpresaId, responderErrorScope } from '../utils/scope.js';
+import { normalizarGiro } from '../utils/giros.js';
 
 export const getEmpresas = async (req, res) => {
   try {
@@ -25,7 +26,8 @@ export const getMiPlan = async (req, res) => {
         'fecha_vencimiento',
         'limite_sucursales',
         'limite_usuarios',
-        'email_contacto'
+        'email_contacto',
+        'giro'
       ]
     });
     if (!empresa) return res.status(404).json({ error: 'Empresa no encontrada' });
@@ -38,10 +40,10 @@ export const getMiPlan = async (req, res) => {
 export const updateEmpresa = async (req, res) => {
   try {
     const empresa_id = obtenerEmpresaId(req.usuario);
-    const camposPermitidos = ['logo_empresa'];
+    const camposPermitidos = ['logo_empresa', 'giro'];
     const datos = {};
     for (const campo of camposPermitidos) {
-      if (req.body[campo] !== undefined) datos[campo] = req.body[campo];
+      if (req.body[campo] !== undefined) datos[campo] = campo === 'giro' ? normalizarGiro(req.body[campo]) : req.body[campo];
     }
     if (Object.keys(datos).length === 0) {
       return res.status(400).json({ error: 'No hay campos validos para actualizar' });

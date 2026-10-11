@@ -6,7 +6,7 @@ const DetalleDevolucion = sequelize.define('DetalleDevolucion', {
   devolucion_id:   { type: DataTypes.INTEGER, allowNull: false },
   producto_id:     { type: DataTypes.INTEGER, allowNull: true },
   nombre_producto: { type: DataTypes.STRING(255), allowNull: true },
-  cantidad:        { type: DataTypes.INTEGER, allowNull: false },
+  cantidad:        { type: DataTypes.DECIMAL(12, 3), allowNull: false },
   precio_unitario: { type: DataTypes.DECIMAL(10, 2), allowNull: false },
   subtotal:        { type: DataTypes.DECIMAL(10, 2), allowNull: false }
 }, { tableName: 'detalle_devoluciones', timestamps: false });

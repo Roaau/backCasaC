@@ -10,8 +10,42 @@ import {
   resolverSucursalOperativa,
   responderErrorScope
 } from "../utils/scope.js";
+import { UNIDADES_VENTA } from "../utils/giros.js";
+import { leerFilasInventario, COLUMNAS_PLANTILLA } from "../utils/importarExcel.js";
+import sequelize from "../config/database.js";
 
 export const uploadMiddleware = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } }).single('archivo');
+
+// Campos que el cliente puede escribir. empresa_id y producto_id nunca vienen del navegador
+// (antes updateProducto aceptaba empresa_id y permitia mover un producto a otra empresa).
+const CAMPOS_PRODUCTO = [
+  "codigo_barras", "nombre", "descripcion", "categoria",
+  "precio_menudeo", "precio_mayoreo", "precio_oferta", "precio_compra",
+  "stock_actual", "stock_minimo", "minimo_mayoreo", "activo",
+  "unidad_venta", "marca", "modelo", "talla", "color", "lote", "fecha_caducidad",
+  "requiere_receta", "ubicacion",
+  "clave_sat", "clave_unidad_sat", "objeto_imp"
+];
+
+const TEXTO_OPCIONAL = ["descripcion", "marca", "modelo", "talla", "color", "lote", "ubicacion"];
+
+export const limpiarProducto = (body = {}) => {
+  const data = {};
+  for (const campo of CAMPOS_PRODUCTO) {
+    if (body[campo] !== undefined) data[campo] = body[campo];
+  }
+  for (const campo of TEXTO_OPCIONAL) {
+    if (data[campo] !== undefined) data[campo] = String(data[campo] ?? "").trim() || null;
+  }
+  if (data.unidad_venta !== undefined && !UNIDADES_VENTA.includes(data.unidad_venta)) data.unidad_venta = "pieza";
+  if (data.fecha_caducidad !== undefined && !/^\d{4}-\d{2}-\d{2}$/.test(String(data.fecha_caducidad || ""))) data.fecha_caducidad = null;
+  if (data.requiere_receta !== undefined) data.requiere_receta = data.requiere_receta === true || data.requiere_receta === "true";
+  if (data.precio_compra !== undefined && (data.precio_compra === "" || data.precio_compra === null)) data.precio_compra = null;
+  // Clave SAT generica si no se maneja facturacion
+  if (data.clave_sat === "" || data.clave_sat === null) delete data.clave_sat;
+  if (data.clave_unidad_sat === "" || data.clave_unidad_sat === null) delete data.clave_unidad_sat;
+  return data;
+};
 
 export const buscarProducto = async (req, res) => {
   try {
@@ -22,9 +56,12 @@ export const buscarProducto = async (req, res) => {
     const productos = await Producto.findAll({
       where: {
         empresa_id,
+        activo: { [Op.not]: false }, // los desactivados no se venden
         [Op.or]: [
           { codigo_barras: texto },
-          { nombre: { [Op.iLike]: `%${texto}%` } }
+          { nombre: { [Op.iLike]: `%${texto}%` } },
+          { marca:  { [Op.iLike]: `%${texto}%` } },
+          { modelo: { [Op.iLike]: `%${texto}%` } }
         ]
       },
       include: [{
@@ -64,6 +101,10 @@ export const getAll = async (req, res) => {
         { nombre:        { [Op.iLike]: `%${q}%` } },
         { codigo_barras: { [Op.iLike]: `%${q}%` } },
         { descripcion:   { [Op.iLike]: `%${q}%` } },
+        { marca:         { [Op.iLike]: `%${q}%` } },
+        { modelo:        { [Op.iLike]: `%${q}%` } },
+        { talla:         { [Op.iLike]: `%${q}%` } },
+        { color:         { [Op.iLike]: `%${q}%` } },
       ];
     }
     if (categoria) where.categoria = categoria;
@@ -124,8 +165,13 @@ export const createProducto = async (req, res) => {
   try {
     const empresa_id = req.usuario.empresa_id;
     const sucursal_id = await resolverSucursalOperativa(req);
-    const data = { ...req.body, empresa_id };
+    const data = { ...limpiarProducto(req.body), empresa_id };
     if (!data.minimo_mayoreo || Number(data.minimo_mayoreo) === 0) data.minimo_mayoreo = null;
+    if (data.activo === undefined) data.activo = true;
+    data.codigo_barras = String(data.codigo_barras ?? "").trim() || codigoInterno();
+    if (await Producto.findOne({ where: { empresa_id, codigo_barras: data.codigo_barras }, attributes: ["producto_id"] })) {
+      return res.status(400).json({ error: "Ya tienes un producto con ese código de barras." });
+    }
 
     const nuevoProducto = await Producto.create(data);
     const stockInicial = Number(nuevoProducto.stock_actual) || 0;
@@ -167,7 +213,7 @@ export const updateProducto = async (req, res) => {
     const { id } = req.params;
     const empresa_id = req.usuario.empresa_id;
     const sucursal_id = await resolverSucursalOperativa(req);
-    const data = { ...req.body };
+    const data = limpiarProducto(req.body);
     if (data.minimo_mayoreo !== undefined && (!data.minimo_mayoreo || Number(data.minimo_mayoreo) === 0)) {
       data.minimo_mayoreo = null;
     }
@@ -229,108 +275,244 @@ export const updateProducto = async (req, res) => {
   }
 };
 
-export const importarProductos = async (req, res) => {
+const LOTE_IMPORTACION = 500;
+
+const codigoInterno = () => `INT-${Date.now().toString(36).toUpperCase()}${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
+
+// POST /api/productos/importar  (multipart: archivo, sucursal_id, actualizar=true|false)
+// Crea productos nuevos y, si actualizar=true, actualiza precios/datos/existencia de los que ya existen.
+export const importarProductos = (req, res) => {
   uploadMiddleware(req, res, async (err) => {
-    if (err) return res.status(400).json({ error: 'Error al recibir el archivo' });
+    if (err) return res.status(400).json({ error: 'Error al recibir el archivo (maximo 10 MB)' });
     if (!req.file) return res.status(400).json({ error: 'No se envió ningún archivo' });
 
-    const empresa_id  = req.usuario.empresa_id;
-    const sucursal_id = await resolverSucursalOperativa(req);
-
     try {
-      const wb   = XLSX.read(req.file.buffer, { type: 'buffer' });
-      const ws   = wb.Sheets[wb.SheetNames[0]];
-      const rows = XLSX.utils.sheet_to_json(ws, { defval: null });
+      const empresa_id  = req.usuario.empresa_id;
+      const sucursal_id = await resolverSucursalOperativa(req);
+      const actualizar  = req.body?.actualizar === 'true' || req.body?.actualizar === true;
 
-      if (rows.length === 0) return res.status(400).json({ error: 'El archivo está vacío o no tiene el formato correcto' });
+      const { filas, reconocidas, ignoradas } = leerFilasInventario(req.file.buffer);
+      if (filas.length === 0) return res.status(400).json({ error: 'El archivo no tiene productos debajo de los encabezados' });
+      if (filas.length > 20000) return res.status(400).json({ error: 'Maximo 20,000 productos por archivo. Divide el Excel en partes.' });
 
-      // Todas las sucursales de la empresa para crear stock en cada una
-      const sucursales = await Sucursal.findAll({ where: { empresa_id }, attributes: ['sucursal_id'] });
+      const sucursales = await Sucursal.findAll({ where: { empresa_id, activa: true }, attributes: ['sucursal_id'] });
       const sucursalIds = sucursales.map(s => s.sucursal_id);
 
-      let importados = 0, omitidos = 0;
-      const errores  = [];
+      const existentes = await Producto.findAll({
+        where: { empresa_id },
+        attributes: ['producto_id', 'codigo_barras', 'nombre']
+      });
+      const porCodigo = new Map(existentes.filter(p => p.codigo_barras).map(p => [String(p.codigo_barras), p]));
 
-      for (const row of rows) {
+      const errores = [];
+      const nuevos = [];
+      const paraActualizar = [];
+      const vistosEnArchivo = new Set();
+      let omitidos = 0;
+
+      for (const { numero, datos } of filas) {
+        if (!datos.nombre) { omitidos++; errores.push(`Fila ${numero}: sin nombre`); continue; }
+        if (datos.precio_menudeo !== undefined && datos.precio_menudeo !== null && datos.precio_menudeo < 0) {
+          omitidos++; errores.push(`Fila ${numero} (${datos.nombre}): precio negativo`); continue;
+        }
+        if (datos.stock_actual !== undefined && datos.stock_actual !== null) {
+          if (datos.stock_actual < 0) { omitidos++; errores.push(`Fila ${numero} (${datos.nombre}): existencia negativa`); continue; }
+          // Las piezas no se fraccionan: si la unidad es pieza, se redondea la existencia
+          if ((datos.unidad_venta ?? 'pieza') === 'pieza') datos.stock_actual = Math.round(datos.stock_actual);
+        }
+
+        const codigo = datos.codigo_barras ? String(datos.codigo_barras) : null;
+        if (codigo && vistosEnArchivo.has(codigo)) { omitidos++; errores.push(`Fila ${numero}: codigo ${codigo} repetido en el archivo`); continue; }
+        if (codigo) vistosEnArchivo.add(codigo);
+
+        const existente = codigo ? porCodigo.get(codigo) : null;
+        if (existente) {
+          if (actualizar) paraActualizar.push({ numero, existente, datos });
+          else omitidos++;
+          continue;
+        }
+        nuevos.push({ numero, datos: { ...datos, codigo_barras: codigo || codigoInterno() } });
+      }
+
+      // Altas por lotes: un INSERT por cada 500 productos en lugar de 3 consultas por fila
+      let importados = 0;
+      for (let i = 0; i < nuevos.length; i += LOTE_IMPORTACION) {
+        const lote = nuevos.slice(i, i + LOTE_IMPORTACION);
+        const t = await sequelize.transaction();
         try {
-          const codigo = row.codigo_barras?.toString().trim();
-          const nombre = row.nombre?.toString().trim();
-          if (!codigo || !nombre) { omitidos++; continue; }
-
-          const existe = await Producto.findOne({ where: { codigo_barras: codigo, empresa_id } });
-          if (existe) { omitidos++; continue; }
-
-          const producto = await Producto.create({
+          const creados = await Producto.bulkCreate(lote.map(({ datos }) => ({
+            ...limpiarProducto(datos),
             empresa_id,
-            codigo_barras:    codigo,
-            nombre,
-            descripcion:      row.descripcion     || null,
-            categoria:        row.categoria        || 'Varios',
-            precio_menudeo:   Number(row.precio_menudeo)  || 0,
-            precio_mayoreo:   Number(row.precio_mayoreo)  || 0,
-            precio_oferta:    Number(row.precio_oferta)   || 0,
-            stock_actual:     Number(row.stock_actual)    || 0,
-            stock_minimo:     Number(row.stock_minimo)    || 0,
-            minimo_mayoreo:   Number(row.minimo_mayoreo)  || null,
-            clave_sat:        row.clave_sat        || '01010101',
-            clave_unidad_sat: row.clave_unidad_sat || 'H87',
-            objeto_imp:       row.objeto_imp       || '02',
-            activo:           true
-          });
+            categoria:      datos.categoria || 'Varios',
+            precio_menudeo: datos.precio_menudeo ?? 0,
+            precio_mayoreo: datos.precio_mayoreo ?? 0,
+            precio_oferta:  datos.precio_oferta ?? 0,
+            stock_actual:   datos.stock_actual ?? 0,
+            stock_minimo:   datos.stock_minimo ?? 0,
+            minimo_mayoreo: datos.minimo_mayoreo || null,
+            activo:         true
+          })), { transaction: t, returning: true });
 
-          // Crear StockSucursal para todas las sucursales
-          await Promise.all(sucursalIds.map(sid =>
-            StockSucursal.create({
-              producto_id:  producto.producto_id,
-              sucursal_id:  sid,
-              stock_actual: sid === Number(sucursal_id) ? (Number(row.stock_actual) || 0) : 0,
-              stock_minimo: Number(row.stock_minimo) || 0
-            }).catch(() => {}) // ignorar si ya existe
-          ));
+          await StockSucursal.bulkCreate(creados.flatMap(p => sucursalIds.map(sid => ({
+            producto_id:  p.producto_id,
+            sucursal_id:  sid,
+            stock_actual: sid === sucursal_id ? (Number(p.stock_actual) || 0) : 0,
+            stock_minimo: Number(p.stock_minimo) || 0
+          }))), { transaction: t, ignoreDuplicates: true });
 
-          const stockInicial = Number(row.stock_actual) || 0;
-          await MovimientoInventario.create({
-            producto_id: producto.producto_id,
-            nombre_producto: producto.nombre,
-            codigo_barras: producto.codigo_barras,
+          await MovimientoInventario.bulkCreate(creados.filter(p => Number(p.stock_actual) > 0).map(p => ({
+            producto_id: p.producto_id,
+            nombre_producto: p.nombre,
+            codigo_barras: p.codigo_barras,
             usuario_id: req.usuario.id,
             sucursal_id,
             tipo_movimiento: "ENTRADA",
             motivo: "ALTA",
-            cantidad: stockInicial,
+            cantidad: Number(p.stock_actual),
             stock_anterior: 0,
-            stock_nuevo: stockInicial,
+            stock_nuevo: Number(p.stock_actual),
             observaciones: "Alta inicial por importacion",
             fecha: new Date()
-          });
+          })), { transaction: t });
 
-          importados++;
-        } catch (rowErr) {
-          errores.push(`${row.nombre || row.codigo_barras}: ${rowErr.message}`);
+          await t.commit();
+          importados += creados.length;
+        } catch (loteErr) {
+          await t.rollback();
+          errores.push(`Filas ${lote[0].numero}-${lote[lote.length - 1].numero}: ${loteErr.message}`);
+        }
+      }
+
+      // Actualizaciones: solo campos que trae el Excel. La existencia se ajusta en la sucursal activa.
+      let actualizados = 0;
+      for (const { numero, existente, datos } of paraActualizar) {
+        const t = await sequelize.transaction();
+        try {
+          const cambios = limpiarProducto(datos);
+          delete cambios.codigo_barras;
+          const nuevaExistencia = cambios.stock_actual;
+          delete cambios.stock_actual;
+          for (const k of Object.keys(cambios)) if (cambios[k] === null && k !== 'precio_compra') delete cambios[k];
+
+          if (Object.keys(cambios).length > 0) {
+            await Producto.update(cambios, { where: { producto_id: existente.producto_id, empresa_id }, transaction: t });
+          }
+
+          if (nuevaExistencia !== undefined && nuevaExistencia !== null) {
+            let stockReg = await StockSucursal.findOne({ where: { producto_id: existente.producto_id, sucursal_id }, transaction: t, lock: true });
+            if (!stockReg) {
+              stockReg = await StockSucursal.create({ producto_id: existente.producto_id, sucursal_id, stock_actual: 0, stock_minimo: cambios.stock_minimo ?? 0 }, { transaction: t });
+            }
+            const anterior = Number(stockReg.stock_actual) || 0;
+            if (anterior !== nuevaExistencia) {
+              await stockReg.update({ stock_actual: nuevaExistencia }, { transaction: t });
+              await Producto.increment('stock_actual', { by: nuevaExistencia - anterior, where: { producto_id: existente.producto_id, empresa_id }, transaction: t });
+              await MovimientoInventario.create({
+                producto_id: existente.producto_id,
+                nombre_producto: cambios.nombre ?? existente.nombre,
+                codigo_barras: existente.codigo_barras,
+                usuario_id: req.usuario.id,
+                sucursal_id,
+                tipo_movimiento: nuevaExistencia > anterior ? "ENTRADA" : "SALIDA",
+                motivo: "AJUSTE",
+                cantidad: Math.abs(nuevaExistencia - anterior),
+                stock_anterior: anterior,
+                stock_nuevo: nuevaExistencia,
+                observaciones: "Ajuste por importacion de Excel",
+                fecha: new Date()
+              }, { transaction: t });
+            }
+          }
+          await t.commit();
+          actualizados++;
+        } catch (filaErr) {
+          await t.rollback();
+          errores.push(`Fila ${numero} (${datos.nombre}): ${filaErr.message}`);
         }
       }
 
       return res.json({
-        mensaje:    `Importación completada`,
+        mensaje: 'Importación completada',
         importados,
+        actualizados,
         omitidos,
-        errores:    errores.slice(0, 10),
-        total_filas: rows.length
+        errores: errores.slice(0, 20),
+        total_errores: errores.length,
+        total_filas: filas.length,
+        columnas_reconocidas: reconocidas,
+        columnas_ignoradas: ignoradas
       });
-    } catch (parseErr) {
-      return res.status(400).json({ error: 'No se pudo leer el archivo Excel. Verifica el formato.' });
+    } catch (e) {
+      if (e.status) return responderErrorScope(res, e);
+      return res.status(400).json({ error: 'No se pudo leer el archivo. Usa Excel (.xlsx, .xls) o CSV.' });
     }
   });
+};
+
+// GET /api/productos/plantilla — Excel de ejemplo para cargar inventario
+export const descargarPlantilla = (req, res) => {
+  const ejemplos = [
+    ["7501055300075", "Refresco cola 600 ml", "Bebidas", "pieza", 18, 16, 12, 13.5, 48, 12, "", "", "", "", "", "", "no", "Refrigerador 1", ""],
+    ["", "Frijol a granel", "Abarrotes", "kg", 32, "", "", 24, 25.5, 5, "", "", "", "", "", "", "no", "", "Se vende por kilo"],
+    ["7501234567890", "Paracetamol 500 mg 10 tabletas", "Medicamentos", "pieza", 35, "", "", 18, 30, 10, "Genérico", "", "", "", "L2309A", "31/12/2027", "no", "Estante A2", ""],
+    ["GOR-NY-NEG", "Gorra beisbolera", "Gorras", "pieza", 250, 220, 6, 120, 15, 3, "New Era", "9FORTY", "Ajustable", "Negro", "", "", "no", "", ""],
+    ["", "Cable calibre 12", "Electricidad e Iluminación", "metro", 14, 12, 100, 8, 300, 50, "Condumex", "", "", "Rojo", "", "", "no", "Pasillo 3", ""],
+  ];
+  const ws = XLSX.utils.aoa_to_sheet([COLUMNAS_PLANTILLA, ...ejemplos]);
+  ws['!cols'] = COLUMNAS_PLANTILLA.map(c => ({ wch: Math.max(12, c.length + 2) }));
+  const instrucciones = XLSX.utils.aoa_to_sheet([
+    ["Cómo llenar la plantilla"],
+    ["Solo es obligatorio el Nombre. Las columnas que no uses puedes borrarlas."],
+    ["Codigo de barras: si lo dejas vacío se genera un código interno (útil para granel, fruta, etc.)."],
+    ["Unidad: pieza, kg, litro o metro. kg/litro/metro permiten vender con decimales (ej. 0.250 kg)."],
+    ["Precio = precio de venta al público. Costo = lo que te cuesta (para calcular tu ganancia)."],
+    ["Caducidad: dd/mm/aaaa o mm/aaaa. Requiere receta: si / no."],
+    ["También se aceptan encabezados como Código, Producto, Existencia, Precio venta, Laboratorio, Departamento."],
+    ["Si importas un código que ya existe y activas 'Actualizar existentes', se actualizan precio, datos y existencia."],
+  ]);
+  instrucciones['!cols'] = [{ wch: 110 }];
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Productos');
+  XLSX.utils.book_append_sheet(wb, instrucciones, 'Instrucciones');
+  const buffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', 'attachment; filename="plantilla_inventario_scpos.xlsx"');
+  res.send(buffer);
 };
 
 export const deleteProducto = async (req, res) => {
   try {
     const { id } = req.params;
     const empresa_id = req.usuario.empresa_id;
-    const filasEliminadas = await Producto.destroy({ where: { producto_id: id, empresa_id } });
-    if (filasEliminadas === 0) return res.status(404).json({ error: "Producto no encontrado" });
-    res.json({ msg: "Producto eliminado correctamente" });
+    const producto = await Producto.findOne({ where: { producto_id: id, empresa_id } });
+    if (!producto) return res.status(404).json({ error: "Producto no encontrado" });
+
+    // Con historial (ventas, compras, movimientos) se desactiva para no romper reportes
+    const [historial] = await sequelize.query(
+      `SELECT 1 FROM detalle_ventas WHERE producto_id = :id
+       UNION ALL SELECT 1 FROM movimientos_inventario WHERE producto_id = :id AND motivo <> 'ALTA'
+       LIMIT 1`,
+      { replacements: { id: producto.producto_id } }
+    );
+    if (historial.length > 0) {
+      await producto.update({ activo: false });
+      return res.json({ msg: "Producto desactivado (tiene historial)", eliminado: false });
+    }
+
+    const t = await sequelize.transaction();
+    try {
+      await MovimientoInventario.destroy({ where: { producto_id: producto.producto_id }, transaction: t });
+      await StockSucursal.destroy({ where: { producto_id: producto.producto_id }, transaction: t });
+      await producto.destroy({ transaction: t });
+      await t.commit();
+    } catch (e) {
+      await t.rollback();
+      // Si alguna otra tabla lo referencia, se desactiva en lugar de fallar
+      await producto.update({ activo: false });
+      return res.json({ msg: "Producto desactivado (tiene historial)", eliminado: false });
+    }
+    res.json({ msg: "Producto eliminado correctamente", eliminado: true });
   } catch (err) {
-    res.status(500).json({ error: err.message || "Error al eliminar producto" });
+    responderErrorScope(res, err);
   }
 };

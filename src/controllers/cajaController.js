@@ -4,25 +4,23 @@ import Caja from '../models/CajaModel.js';
 import MovimientoCaja from '../models/MovimientoCaja.js';
 import { resolverSucursalOperativa, responderErrorScope, validarSucursalEmpresa } from '../utils/scope.js';
 import { registrarAuditoria } from '../utils/auditoria.js';
+import { esMismoDiaLocal } from '../utils/fechas.js';
 
-function esCajaDeHoy(caja) {
-  const fecha = new Date(caja.fecha_apertura);
-  const hoy = new Date();
-  return fecha.getFullYear() === hoy.getFullYear()
-    && fecha.getMonth() === hoy.getMonth()
-    && fecha.getDate() === hoy.getDate();
-}
+const esCajaDeHoy = (caja) => esMismoDiaLocal(caja.fecha_apertura);
 async function calcularTotalesCaja(caja) {
   const cajaId = Number(caja.caja_id);
   const montoInicial = parseFloat(caja.monto_inicial) || 0;
 
+  // Una caja cerrada solo cuenta las ventas hasta su cierre
+  const limiteCierre = caja.fecha_cierre ? 'AND fecha <= :fechaCierre' : '';
   const ventasRaw = await sequelize.query(
     `SELECT COALESCE(SUM(total), 0) as total
      FROM "ventas"
      WHERE fecha >= :fechaInicio
+       ${limiteCierre}
        AND sucursal_id = :sucursal_id
        AND COALESCE(tipo_pago, 'efectivo') = 'efectivo'`,
-    { replacements: { fechaInicio: caja.fecha_apertura, sucursal_id: caja.sucursal_id }, type: QueryTypes.SELECT }
+    { replacements: { fechaInicio: caja.fecha_apertura, fechaCierre: caja.fecha_cierre, sucursal_id: caja.sucursal_id }, type: QueryTypes.SELECT }
   );
   const totalVentas = parseFloat(ventasRaw[0]?.total) || 0;
 
@@ -60,11 +58,13 @@ export const estadoCaja = async (req, res) => {
 
 export const abrirCaja = async (req, res) => {
   try {
-    const { usuario_id, monto } = req.body;
+    const { monto } = req.body;
+    const usuario_id = req.usuario.id;
     const sucursal_id = await resolverSucursalOperativa(req);
 
-    if (usuario_id === undefined || monto === undefined) {
-      return res.status(400).json({ error: 'Faltan datos requeridos' });
+    const montoNum = Number(monto);
+    if (monto === undefined || monto === null || !Number.isFinite(montoNum) || montoNum < 0) {
+      return res.status(400).json({ error: 'Ingresa un monto inicial valido' });
     }
 
     const cajaAbierta = await Caja.findOne({ where: { fecha_cierre: null, sucursal_id } });
@@ -82,7 +82,7 @@ export const abrirCaja = async (req, res) => {
     const nuevaCaja = await Caja.create({
       usuario_apertura_id: usuario_id,
       sucursal_id,
-      monto_inicial: monto,
+      monto_inicial: montoNum,
       fecha_apertura: new Date()
     });
     res.status(201).json({ message: "Caja abierta", caja: nuevaCaja });
@@ -108,7 +108,8 @@ export const obtenerTotalesCaja = async (req, res) => {
 
 export const registrarMovimiento = async (req, res) => {
   try {
-    const { caja_id, usuario_id, tipo_movimiento, monto, concepto } = req.body;
+    const { caja_id, tipo_movimiento, monto, concepto } = req.body;
+    const usuario_id = req.usuario.id;
     const sucursal_id = await resolverSucursalOperativa(req);
     const caja = await Caja.findOne({ where: { caja_id, fecha_cierre: null, sucursal_id } });
     if (!caja) return res.status(400).json({ error: 'Caja cerrada o no pertenece a esta sucursal' });
@@ -153,9 +154,8 @@ export const cerrarCaja = async (req, res) => {
   try {
     const sanitize = (val) => { const n = parseFloat(val); return isNaN(n) ? 0 : n; };
     const idCaja      = req.body.caja_id     || req.body.cajaId;
-    let   idUsuario   = req.body.usuario_cierre_id ?? req.body.usuarioCierreId;
+    const idUsuario   = req.usuario.id;
     const montoFinalDb = sanitize(req.body.montoFinal ?? req.body.monto_final);
-    const diferenciaDb = sanitize(req.body.diferencia);
     const motivoCierre = req.body.motivo || req.body.concepto || null;
     const checklist = req.body.checklist || {};
     const checklistCompleto = checklist.efectivo_contado === true
@@ -167,21 +167,33 @@ export const cerrarCaja = async (req, res) => {
       error.status = 400;
       throw error;
     }
-    if (Math.abs(diferenciaDb) > 0.009 && !String(motivoCierre || '').trim()) {
-      const error = new Error('Agrega una observacion para explicar la diferencia de caja');
+    if (!idCaja) {
+      const error = new Error('caja_id requerido');
       error.status = 400;
       throw error;
     }
 
-    if (!idCaja || idUsuario === undefined) throw new Error(`Datos faltantes. Caja: ${idCaja}, Usuario: ${idUsuario}`);
-
-    const caja = await Caja.findByPk(Number(idCaja), { transaction: t });
+    const caja = await Caja.findByPk(Number(idCaja), { transaction: t, lock: true });
     if (!caja) {
       const error = new Error('Caja no encontrada');
       error.status = 404;
       throw error;
     }
     await validarSucursalEmpresa(req.usuario, caja.sucursal_id);
+    if (caja.fecha_cierre) {
+      const error = new Error('Esta caja ya fue cerrada');
+      error.status = 409;
+      throw error;
+    }
+
+    // La diferencia se calcula en el servidor, no se confia en la que manda el navegador
+    const { montoEsperado } = await calcularTotalesCaja(caja);
+    const diferenciaDb = Math.round((montoFinalDb - montoEsperado) * 100) / 100;
+    if (Math.abs(diferenciaDb) > 0.009 && !String(motivoCierre || '').trim()) {
+      const error = new Error('Agrega una observacion para explicar la diferencia de caja');
+      error.status = 400;
+      throw error;
+    }
 
     await Caja.update(
       { usuario_cierre_id: Number(idUsuario), monto_final: montoFinalDb, fecha_cierre: new Date() },

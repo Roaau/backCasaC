@@ -15,11 +15,11 @@ jest.mock('../models/DetalleCompra.js', () => ({
 }));
 jest.mock('../models/Proveedor.js', () => ({
   __esModule: true,
-  default: { findAll: jest.fn() }
+  default: { findAll: jest.fn(), findOne: jest.fn() }
 }));
 jest.mock('../models/Producto.js', () => ({
   __esModule: true,
-  default: { update: jest.fn() }
+  default: { update: jest.fn(), findOne: jest.fn(), increment: jest.fn() }
 }));
 jest.mock('../models/StockSucursalModel.js', () => ({
   __esModule: true,
@@ -48,6 +48,7 @@ const { default: db } = require('../config/database.js');
 const { default: Compra } = require('../models/Compra.js');
 const { default: DetalleCompra } = require('../models/DetalleCompra.js');
 const { default: Producto } = require('../models/Producto.js');
+const { default: Proveedor } = require('../models/Proveedor.js');
 const { default: StockSucursal } = require('../models/StockSucursalModel.js');
 const { default: MovimientoInventario } = require('../models/MovimientoInventario.js');
 const { resolverScopeSucursales, resolverSucursalOperativa } = require('../utils/scope.js');
@@ -103,6 +104,8 @@ describe('Compras - aislamiento multiempresa/sucursal', () => {
     StockSucursal.findOne.mockResolvedValue({ stock_actual: 2, update: jest.fn().mockResolvedValue(true) });
     MovimientoInventario.create.mockResolvedValue({});
     Producto.update.mockResolvedValue([1]);
+    Producto.findOne.mockResolvedValue({ producto_id: 6, nombre: 'Cemento', codigo_barras: '750', unidad_venta: 'pieza' });
+    Proveedor.findOne.mockResolvedValue({ proveedor_id: 1 });
 
     const req = {
       usuario: { id: 9, empresa_id: 15, sucursal_id: 4, rol: 2 },
@@ -123,7 +126,7 @@ describe('Compras - aislamiento multiempresa/sucursal', () => {
       usuario_id: 9
     }), { transaction: tx });
     expect(Producto.update).toHaveBeenCalledWith(
-      { precio_costo: 100 },
+      { precio_compra: 100 },
       { where: { producto_id: 6, empresa_id: 15 }, transaction: tx }
     );
     expect(MovimientoInventario.create).toHaveBeenCalledWith(expect.objectContaining({
@@ -138,5 +141,23 @@ describe('Compras - aislamiento multiempresa/sucursal', () => {
     }), { transaction: tx });
     expect(tx.commit).toHaveBeenCalled();
     expect(res.status).toHaveBeenCalledWith(201);
+  });
+
+  test('rechaza compra de un producto de otra empresa sin tocar stock', async () => {
+    resolverSucursalOperativa.mockResolvedValue(4);
+    Producto.findOne.mockResolvedValue(null);
+    StockSucursal.findOne.mockClear();
+
+    const req = {
+      usuario: { id: 9, empresa_id: 15, sucursal_id: 4, rol: 2 },
+      body: { items: [{ producto_id: 77, nombre_producto: 'Ajeno', cantidad: 3, costo_unitario: 10 }] }
+    };
+    const res = mockRes();
+
+    await crearCompra(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(403);
+    expect(StockSucursal.findOne).not.toHaveBeenCalled();
+    expect(tx.rollback).toHaveBeenCalled();
   });
 });

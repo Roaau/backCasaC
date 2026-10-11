@@ -11,6 +11,7 @@ import jwt from "jsonwebtoken";
 import crypto from "crypto";
 import { enviarCodigoRegistro, enviarCodigoReset, notificarNuevaEmpresa, notificarEmpresaRegistrada } from "../services/emailService.js";
 import { validarLimiteUsuarios } from "../utils/planLimits.js";
+import { normalizarGiro } from "../utils/giros.js";
 
 const generarCodigo = () =>
   'INV-' + crypto.randomBytes(3).toString('hex').toUpperCase();
@@ -69,10 +70,6 @@ export const login = async (req, res) => {
         })
       : null;
 
-    const empresa = user.empresa_id
-      ? await Empresa.findByPk(user.empresa_id, { attributes: ['logo_empresa', 'razon_social'] })
-      : null;
-
     const token = jwt.sign(
       {
         id:            user.usuario_id,
@@ -86,7 +83,7 @@ export const login = async (req, res) => {
     );
 
     const empresaInfo = user.empresa_id
-      ? await Empresa.findByPk(user.empresa_id, { attributes: ['logo_empresa', 'razon_social'] })
+      ? await Empresa.findByPk(user.empresa_id, { attributes: ['logo_empresa', 'razon_social', 'giro'] })
       : null;
 
     return res.json({
@@ -105,6 +102,7 @@ export const login = async (req, res) => {
       sucursal_logo:     sucursal?.logo_b64    ?? null,
       empresa_logo:      empresaInfo?.logo_empresa ?? null,
       empresa_nombre:    empresaInfo?.razon_social ?? null,
+      empresa_giro:      empresaInfo?.giro ?? 'general',
       es_superadmin:     user.es_superadmin === true
     });
   } catch (error) {
@@ -171,7 +169,7 @@ export const registro = async (req, res) => {
     nombre, usuario, contrasena, codigo_invitacion,
     rfc, razon_social, regimen_fiscal,
     email, codigo_verificacion,
-    plan, precio_mensual, limite_sucursales, limite_usuarios
+    plan, precio_mensual, limite_sucursales, limite_usuarios, giro
   } = req.body;
 
   if (!nombre || !usuario || !contrasena) {
@@ -291,7 +289,8 @@ export const registro = async (req, res) => {
           precio_mensual: precioMensual,
           limite_sucursales: limiteSucursales,
           limite_usuarios: limiteUsuarios,
-          email_contacto: email.toLowerCase().trim()
+          email_contacto: email.toLowerCase().trim(),
+          giro:           normalizarGiro(giro)
         },
         { transaction: t }
       );

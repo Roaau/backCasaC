@@ -11,25 +11,24 @@ import CfdiVenta from "../models/CfdiVenta.js";
 import ClienteFiscal from "../models/ClienteFiscal.js";
 import { esAdminEmpresa, resolverSucursalOperativa, responderErrorScope } from "../utils/scope.js";
 import { registrarAuditoria } from "../utils/auditoria.js";
-import { rangoFechasReporte } from "../utils/fechas.js";
+import { rangoFechasReporte, esMismoDiaLocal, fechaLocalISO } from "../utils/fechas.js";
+import { validarLineaVenta, calcularTotalVenta } from "../utils/ventas.js";
+import { cfdiHabilitado } from "../config/features.js";
+import { cantidadValida } from "../utils/giros.js";
 
-function esCajaDeHoy(caja) {
-  const fecha = new Date(caja.fecha_apertura);
-  const hoy = new Date();
-  return fecha.getFullYear() === hoy.getFullYear()
-    && fecha.getMonth() === hoy.getMonth()
-    && fecha.getDate() === hoy.getDate();
-}
+const esCajaDeHoy = (caja) => esMismoDiaLocal(caja.fecha_apertura);
 
 export const crearVenta = async (req, res) => {
   const t = await sequelize.transaction();
   try {
     const {
-      usuario_id, total, tipo_venta, pedido_numero, folio, detalles,
-      forma_pago, tipo_pago, descuento_porcentaje,
-      nombre_cliente, telefono_cliente, direccion_entrega, referencia_entrega, estado_pedido,
-      datos_cfdi
+      total, tipo_venta, pedido_numero, folio, detalles,
+      forma_pago, tipo_pago, descuento_porcentaje, iva_porcentaje,
+      nombre_cliente, telefono_cliente, direccion_entrega, referencia_entrega, estado_pedido
     } = req.body;
+    // El cajero es quien trae el token, no el usuario_id que mande el navegador
+    const usuario_id = req.usuario.id;
+    const datos_cfdi = cfdiHabilitado() ? req.body.datos_cfdi : null;
     const sucursal_id = await resolverSucursalOperativa(req);
 
     if (!["Tienda", "Pedido"].includes(tipo_venta)) throw new Error("tipo_venta debe ser 'Tienda' o 'Pedido'.");
@@ -74,11 +73,12 @@ export const crearVenta = async (req, res) => {
       estado_pedido: estado_pedido || (tipo_venta === "Pedido" ? "PENDIENTE" : null)
     }, { transaction: t });
 
+    let subtotalServidor = 0;
     for (const item of detalles) {
       const cantidadSolicitada = Number(item.cantidad);
       const precioUnitario = Number(item.precio_unitario);
       const subtotalItem = Number(item.subtotal);
-      if (!Number.isInteger(cantidadSolicitada) || cantidadSolicitada <= 0) throw new Error("Cantidad invalida en detalle de venta.");
+      if (!Number.isFinite(cantidadSolicitada) || cantidadSolicitada <= 0) throw new Error("Cantidad invalida en detalle de venta.");
       if (!Number.isFinite(precioUnitario) || precioUnitario < 0) throw new Error("Precio invalido en detalle de venta.");
       if (!Number.isFinite(subtotalItem) || subtotalItem < 0) throw new Error("Subtotal invalido en detalle de venta.");
 
@@ -87,10 +87,23 @@ export const crearVenta = async (req, res) => {
         transaction: t
       });
       if (!prod) throw new Error(`Producto ID ${item.producto_id} no existe.`);
+      if (!cantidadValida(cantidadSolicitada, prod.unidad_venta)) {
+        throw new Error(`Cantidad invalida para ${prod.nombre}: se vende por ${prod.unidad_venta || "pieza"}.`);
+      }
+      if (prod.fecha_caducidad && prod.fecha_caducidad < fechaLocalISO()) {
+        const error = new Error(`${prod.nombre} esta caducado (${prod.fecha_caducidad}). No se puede vender.`);
+        error.status = 409;
+        throw error;
+      }
 
+      const linea = validarLineaVenta(prod, cantidadSolicitada, precioUnitario);
+      subtotalServidor += linea.subtotal;
+
+      // lock: evita que dos cajas vendan la misma ultima pieza al mismo tiempo
       let stockReg = await StockSucursal.findOne({
         where: { producto_id: item.producto_id, sucursal_id },
-        transaction: t
+        transaction: t,
+        lock: true
       });
 
       if (!stockReg) {
@@ -102,7 +115,7 @@ export const crearVenta = async (req, res) => {
         }, { transaction: t });
       }
 
-      if (stockReg.stock_actual < item.cantidad) {
+      if (Number(stockReg.stock_actual) < cantidadSolicitada) {
         throw new Error(`Stock insuficiente en ${prod.nombre}. Disponible: ${stockReg.stock_actual}`);
       }
 
@@ -111,9 +124,9 @@ export const crearVenta = async (req, res) => {
         producto_id: item.producto_id,
         nombre_producto: prod.nombre,
         codigo_barras: prod.codigo_barras,
-        cantidad: item.cantidad,
-        precio_unitario: item.precio_unitario,
-        subtotal: item.subtotal
+        cantidad: cantidadSolicitada,
+        precio_unitario: linea.precio_unitario,
+        subtotal: linea.subtotal
       }, { transaction: t });
 
       const stockAnterior = Number(stockReg.stock_actual) || 0;
@@ -137,6 +150,14 @@ export const crearVenta = async (req, res) => {
         fecha: new Date()
       }, { transaction: t });
     }
+
+    const totalServidor = calcularTotalVenta({
+      subtotal: subtotalServidor,
+      ivaPorcentaje: iva_porcentaje,
+      descuentoPorcentaje: descuento_porcentaje,
+      totalEnviado: total
+    });
+    await nuevaVenta.update({ total: totalServidor }, { transaction: t });
 
     if (datos_cfdi) {
       const { receptor_rfc, receptor_nombre, receptor_cp, receptor_regimen, uso_cfdi, guardar_cliente } = datos_cfdi;
@@ -178,12 +199,12 @@ export const crearVenta = async (req, res) => {
       entidad: "ventas",
       entidad_id: nuevaVenta.venta_id,
       sucursal_id,
-      detalle: { folio, total, tipo_venta, tipo_pago: tipo_pago || "efectivo", pedido_numero },
+      detalle: { folio, total: totalServidor, tipo_venta, tipo_pago: tipo_pago || "efectivo", pedido_numero },
       transaction: t
     });
 
     await t.commit();
-    res.json({ msg: "Venta registrada", folio, venta_id: nuevaVenta.venta_id });
+    res.json({ msg: "Venta registrada", folio, venta_id: nuevaVenta.venta_id, total: totalServidor });
   } catch (error) {
     await t.rollback();
     responderErrorScope(res, error);
@@ -232,7 +253,7 @@ export const getVentaPorId = async (req, res) => {
 };
 export const listarPedidos = async (req, res) => {
   try {
-    const fechaInicio = req.query.fechaInicio || new Date().toISOString().slice(0, 10);
+    const fechaInicio = req.query.fechaInicio || fechaLocalISO();
     const fechaFin = req.query.fechaFin || fechaInicio;
     const { inicio, fin } = rangoFechasReporte(fechaInicio, fechaFin);
     const empresa_id = req.usuario.empresa_id;

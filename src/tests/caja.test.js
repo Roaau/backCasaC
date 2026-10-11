@@ -4,7 +4,7 @@ jest.mock('../models/CajaModel.js', () => ({
 }));
 jest.mock('../models/MovimientoCaja.js', () => ({
   __esModule: true,
-  default: { findAll: jest.fn(), create: jest.fn(), bulkCreate: jest.fn() }
+  default: { findAll: jest.fn(), create: jest.fn(), bulkCreate: jest.fn(), sum: jest.fn() }
 }));
 jest.mock('../models/SucursalModel.js', () => ({
   __esModule: true,
@@ -31,6 +31,8 @@ jest.mock('sequelize', () => ({
 
 const { default: Caja }         = require('../models/CajaModel.js');
 const { default: Sucursal }     = require('../models/SucursalModel.js');
+const { default: MovimientoCaja } = require('../models/MovimientoCaja.js');
+const { default: sequelize }    = require('../config/database.js');
 const { estadoCaja, abrirCaja, cerrarCaja } = require('../controllers/cajaController.js');
 
 const mockRes = () => {
@@ -141,7 +143,10 @@ describe('Caja - cerrarCaja()', () => {
     expect(Caja.update).not.toHaveBeenCalled();
   });
 
-  test('rechaza cierre con diferencia sin observacion', async () => {
+  test('rechaza cierre con diferencia sin observacion (diferencia calculada en servidor)', async () => {
+    Caja.findByPk.mockResolvedValue({ caja_id: 10, sucursal_id: 1, monto_inicial: 500, fecha_apertura: new Date().toISOString(), fecha_cierre: null });
+    sequelize.query.mockResolvedValue([{ total: 0 }]);
+    MovimientoCaja.sum.mockResolvedValue(0);
     const req = {
       body: {
         caja_id: 10,
@@ -162,6 +167,25 @@ describe('Caja - cerrarCaja()', () => {
 
     expect(res.status).toHaveBeenCalledWith(400);
     expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ error: 'Agrega una observacion para explicar la diferencia de caja' }));
+    expect(Caja.update).not.toHaveBeenCalled();
+  });
+
+  test('no permite cerrar dos veces la misma caja', async () => {
+    Caja.findByPk.mockResolvedValue({ caja_id: 10, sucursal_id: 1, monto_inicial: 500, fecha_apertura: new Date().toISOString(), fecha_cierre: new Date().toISOString() });
+    const req = {
+      body: {
+        caja_id: 10,
+        montoFinal: 500,
+        motivo: 'Cierre sin diferencias',
+        checklist: { efectivo_contado: true, movimientos_revisados: true, facturas_revisadas: true }
+      },
+      usuario: { empresa_id: 1, sucursal_id: 1, rol: 1, id: 1 }
+    };
+    const res = mockRes();
+
+    await cerrarCaja(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(409);
     expect(Caja.update).not.toHaveBeenCalled();
   });
 });

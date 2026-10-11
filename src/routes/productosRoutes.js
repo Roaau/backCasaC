@@ -7,6 +7,7 @@ import {
     deleteProducto,
     importarProductos,
     stockBajoCount,
+    descargarPlantilla,
 } from "../controllers/productosController.js";
 import { validarCrearProducto, validarEditarProducto } from "../validators/productos.js";
 import { validate } from "../middleware/validate.js";
@@ -16,6 +17,7 @@ const router = Router();
 
 router.get("/buscar/:texto",  buscarProducto);
 router.get("/stock-bajo-count", stockBajoCount);
+router.get("/plantilla", descargarPlantilla);
 router.get("/",              getAll);
 router.post("/", validarCrearProducto, validate, createProducto);
 router.put("/:id", validarEditarProducto, validate, updateProducto);

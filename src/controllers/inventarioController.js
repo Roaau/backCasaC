@@ -11,6 +11,7 @@ import {
   responderErrorScope
 } from '../utils/scope.js';
 import { rangoFechasReporte } from '../utils/fechas.js';
+import { cantidadValida } from '../utils/giros.js';
 
 const TIPOS_VALIDOS     = ['ENTRADA', 'SALIDA', 'PERDIDA'];
 const MOTIVOS_POR_TIPO  = {
@@ -22,7 +23,8 @@ const MOTIVOS_POR_TIPO  = {
 export const registrarMovimiento = async (req, res) => {
   const t = await sequelize.transaction();
   try {
-    const { producto_id, usuario_id, tipo_movimiento, motivo, cantidad, observaciones } = req.body;
+    const { producto_id, tipo_movimiento, motivo, cantidad, observaciones } = req.body;
+    const usuario_id = req.usuario.id;
     const sucursal_id = await resolverSucursalOperativa(req);
 
     if (!producto_id || !cantidad || !tipo_movimiento) throw new Error("Faltan datos (producto, cantidad o tipo)");
@@ -46,27 +48,31 @@ export const registrarMovimiento = async (req, res) => {
       }, { transaction: t });
     }
 
-    const stockAnterior = stockReg.stock_actual;
+    const cant = Number(cantidad);
+    if (!cantidadValida(cant, producto.unidad_venta)) {
+      throw new Error(`Cantidad invalida: ${producto.nombre} se maneja por ${producto.unidad_venta || "pieza"}`);
+    }
+    const stockAnterior = Number(stockReg.stock_actual) || 0;
     let stockNuevo;
 
     if (tipo_movimiento === 'ENTRADA') {
-      stockNuevo = stockAnterior + parseInt(cantidad);
+      stockNuevo = stockAnterior + cant;
     } else {
-      if (stockAnterior < parseInt(cantidad)) {
+      if (stockAnterior < cant) {
         throw new Error(`Stock insuficiente en esta sucursal. Disponible: ${stockAnterior}`);
       }
-      stockNuevo = stockAnterior - parseInt(cantidad);
+      stockNuevo = stockAnterior - cant;
     }
 
     await stockReg.update({ stock_actual: stockNuevo }, { transaction: t });
     // Mantener stock global sincronizado
-    const diff = tipo_movimiento === 'ENTRADA' ? parseInt(cantidad) : -parseInt(cantidad);
+    const diff = tipo_movimiento === 'ENTRADA' ? cant : -cant;
     await producto.increment('stock_actual', { by: diff, transaction: t });
 
     await MovimientoInventario.create({
       producto_id, nombre_producto: producto.nombre, codigo_barras: producto.codigo_barras,
       usuario_id, sucursal_id, tipo_movimiento, motivo: motivo || null,
-      cantidad: parseInt(cantidad), stock_anterior: stockAnterior, stock_nuevo: stockNuevo,
+      cantidad: cant, stock_anterior: stockAnterior, stock_nuevo: stockNuevo,
       observaciones: observaciones || '', fecha: new Date()
     }, { transaction: t });
 

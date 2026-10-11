@@ -10,7 +10,23 @@ const validarFecha = (valor, nombre) => {
   return valor;
 };
 
-export const rangoFechasReporte = (fechaInicio, fechaFin = fechaInicio) => {
+const offsetMinutos = () => {
+  const m = /^([+-])(\d{2}):(\d{2})$/.exec(OFFSET_LOCAL);
+  if (!m) return -360;
+  const total = Number(m[2]) * 60 + Number(m[3]);
+  return m[1] === "-" ? -total : total;
+};
+
+// Fecha YYYY-MM-DD en la zona horaria del negocio (el servidor corre en UTC).
+export const fechaLocalISO = (fecha = new Date()) => {
+  const d = new Date(fecha);
+  return new Date(d.getTime() + offsetMinutos() * 60000).toISOString().slice(0, 10);
+};
+
+export const esMismoDiaLocal = (fecha, referencia = new Date()) =>
+  fechaLocalISO(fecha) === fechaLocalISO(referencia);
+
+export const rangoFechasReporte =(fechaInicio, fechaFin = fechaInicio) => {
   const inicio = validarFecha(fechaInicio, "fechaInicio");
   const fin = validarFecha(fechaFin, "fechaFin");
   return {

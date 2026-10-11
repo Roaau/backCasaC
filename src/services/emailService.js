@@ -271,7 +271,7 @@ export const notificarEmpresaSuspendida = async ({ destinatario, razon_social, m
   });
 };
 
-// ── Factura CFDI (usa SMTP propio de cada ferretería) ─────────────────────────
+// ── Factura CFDI (usa SMTP propio de cada negocio) ─────────────────────────
 export const enviarFacturaPorCorreo = async ({
   destinatario, cfdi, transporterConfig = null, logo_b64 = null, nombre_negocio = null,
 }) => {

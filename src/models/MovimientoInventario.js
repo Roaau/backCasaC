@@ -24,15 +24,15 @@ const MovimientoInventario = sequelize.define('MovimientoInventario', {
     allowNull: false
   },
   cantidad: { 
-    type: DataTypes.INTEGER,
+    type: DataTypes.DECIMAL(12, 3),
     allowNull: false
   },
   stock_anterior: { 
-    type: DataTypes.INTEGER,
+    type: DataTypes.DECIMAL(12, 3),
     allowNull: true
   },
   stock_nuevo: { 
-    type: DataTypes.INTEGER,
+    type: DataTypes.DECIMAL(12, 3),
     allowNull: true
   },
   motivo: {

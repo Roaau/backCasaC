@@ -16,6 +16,7 @@ import {
   responderErrorScope,
   validarSucursalEmpresa
 } from '../utils/scope.js';
+import { cantidadValida } from '../utils/giros.js';
 
 export const buscarVenta = async (req, res) => {
   try {
@@ -68,29 +69,56 @@ export const listarVentasParaDevolucion = async (req, res) => {
 export const crear = async (req, res) => {
   const t = await sequelize.transaction();
   try {
-    const { venta_id, folio_venta, motivo, usuario_id, detalles } = req.body;
+    const { venta_id, folio_venta, motivo, detalles } = req.body;
+    const usuario_id = req.usuario.id;
     const sucursal_id = await resolverSucursalOperativa(req);
     if (!detalles?.length) throw new Error('Debe seleccionar al menos un producto a devolver');
 
-    if (venta_id) {
-      const venta = await Venta.findOne({ where: { venta_id, sucursal_id }, transaction: t });
-      if (!venta) throw new Error('La venta no pertenece a esta sucursal');
-      const yaDevuelta = await Devolucion.findOne({ where: { venta_id }, transaction: t });
-      if (yaDevuelta) {
-        const error = new Error('Esta venta ya tiene una devolución registrada');
-        error.status = 409;
-        throw error;
-      }
+    if (!venta_id) {
+      const error = new Error('La devolución debe ligarse a una venta');
+      error.status = 400;
+      throw error;
+    }
+    const venta = await Venta.findOne({ where: { venta_id, sucursal_id }, transaction: t });
+    if (!venta) throw new Error('La venta no pertenece a esta sucursal');
+    const yaDevuelta = await Devolucion.findOne({ where: { venta_id }, transaction: t });
+    if (yaDevuelta) {
+      const error = new Error('Esta venta ya tiene una devolución registrada');
+      error.status = 409;
+      throw error;
     }
 
-    const totalDevuelto = detalles.reduce((s, d) => s + Number(d.subtotal), 0);
+    // Montos y cantidades salen de la venta original, no de lo que mande el navegador.
+    // ratio aplica el mismo IVA/descuento que tuvo la venta.
+    const vendidos = await DetalleVenta.findAll({ where: { venta_id }, transaction: t });
+    const baseVenta = vendidos.reduce((s, v) => s + Number(v.precio_unitario) * Number(v.cantidad), 0);
+    const ratio = baseVenta > 0 ? Number(venta.total) / baseVenta : 1;
+
+    const lineas = detalles.map(d => {
+      const vendido = vendidos.find(v => Number(v.producto_id) === Number(d.producto_id));
+      const cantidad = Number(d.cantidad);
+      if (!vendido) throw new Error('Uno de los productos no pertenece a esta venta');
+      if (!cantidadValida(cantidad, "kg") || cantidad > Number(vendido.cantidad)) {
+        throw new Error(`Cantidad a devolver invalida para ${vendido.nombre_producto}`);
+      }
+      const precio = Number(vendido.precio_unitario);
+      return {
+        producto_id: vendido.producto_id,
+        nombre_producto: vendido.nombre_producto,
+        cantidad,
+        precio_unitario: precio,
+        subtotal: Math.round(precio * cantidad * ratio * 100) / 100
+      };
+    });
+
+    const totalDevuelto = Math.round(lineas.reduce((s, d) => s + d.subtotal, 0) * 100) / 100;
 
     const dev = await Devolucion.create(
-      { venta_id, folio_venta, motivo, usuario_id, sucursal_id, total_devuelto: totalDevuelto },
+      { venta_id, folio_venta: venta.folio ?? folio_venta, motivo, usuario_id, sucursal_id, total_devuelto: totalDevuelto },
       { transaction: t }
     );
 
-    for (const d of detalles) {
+    for (const d of lineas) {
       await DetalleDevolucion.create({
         devolucion_id:   dev.devolucion_id,
         producto_id:     d.producto_id,

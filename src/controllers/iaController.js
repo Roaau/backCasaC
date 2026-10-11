@@ -1,10 +1,12 @@
 import sequelize from "../config/database.js";
 import { QueryTypes } from "sequelize";
 import { resolverScopeSucursales } from "../utils/scope.js";
-import { rangoFechasReporte } from "../utils/fechas.js";
+import { rangoFechasReporte, fechaLocalISO } from "../utils/fechas.js";
 import { registrarAuditoria } from "../utils/auditoria.js";
 import { generarNotificacionesEmpresa } from "./notificacionesController.js";
 import Notificacion from "../models/Notificacion.js";
+import Empresa from "../models/EmpresaModel.js";
+import { nombreGiro } from "../utils/giros.js";
 
 const GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models";
 const DEFAULT_MODEL = process.env.GEMINI_MODEL || "gemini-3.1-flash-lite";
@@ -17,7 +19,7 @@ const CACHE_TTL_MS = Number(process.env.IA_CACHE_TTL_MS || 10 * 60 * 1000);
 const usage = new Map();
 const cache = new Map();
 
-const todayKey = () => new Date().toISOString().slice(0, 10);
+const todayKey = () => fechaLocalISO();
 
 function tieneGeminiKey() {
   return Boolean(process.env.GEMINI_API_KEY || process.env.GOOGLE_AI_API_KEY);
@@ -211,9 +213,10 @@ async function auditoriaResumen(scope, fechaInicio, fechaFin) {
   `, { replacements: { empresaId: scope.empresa_id, sucursalIds: scope.sucursalIds, inicio: rango.inicio, fin: rango.fin }, type: QueryTypes.SELECT });
 }
 
-function buildPrompt(tipo, payload) {
+function buildPrompt(tipo, payload, giro) {
   const instrucciones = "Responde en espanol mexicano, maximo 7 bullets. Se practico, accionable y prudente. No acuses a empleados ni inventes datos. Si algo requiere revision, di \"conviene revisar\". No menciones que eres IA.";
-  const system = `Eres el asistente inteligente del dueno de una ferreteria con POS multi-sucursal. ${instrucciones}`;
+  const tipoNegocio = giro && giro !== "general" ? nombreGiro(giro) : "comercio con punto de venta";
+  const system = `Eres el asistente inteligente del dueno de un negocio de giro "${tipoNegocio}" que puede tener varias sucursales. Adapta tus recomendaciones a ese giro. ${instrucciones}`;
   const prompt = `Tipo de analisis: ${tipo}
 Datos agregados, sin datos fiscales ni datos sensibles completos:
 ${JSON.stringify(payload, null, 2)}
@@ -281,7 +284,7 @@ function fallbackIA(tipo, payload) {
 async function responderIA(req, res, tipo, payloadBuilder, maxTokens = 900) {
   try {
     const scope = await resolverScopeSucursales(req);
-    const fechaInicio = req.body?.fechaInicio || new Date().toISOString().slice(0, 10);
+    const fechaInicio = req.body?.fechaInicio || fechaLocalISO();
     const fechaFin = req.body?.fechaFin || fechaInicio;
     const cacheKey = JSON.stringify({ tipo, empresa: scope.empresa_id, sucursales: scope.sucursalIds, fechaInicio, fechaFin, body: req.body });
     const cached = cacheGet(cacheKey);
@@ -289,7 +292,8 @@ async function responderIA(req, res, tipo, payloadBuilder, maxTokens = 900) {
 
     checkLimit(req);
     const payload = await payloadBuilder(scope, fechaInicio, fechaFin);
-    const { system, prompt } = buildPrompt(tipo, payload);
+    const empresa = await Empresa.findByPk(scope.empresa_id, { attributes: ["giro"] });
+    const { system, prompt } = buildPrompt(tipo, payload, empresa?.giro);
 
     try {
       const texto = await llamarGemini({ system, prompt, maxTokens });
@@ -322,7 +326,7 @@ export const getStatus = (req, res) => {
 export const consultar = async (req, res) => {
   try {
     checkLimit(req);
-    const system = String(req.body.system || "Eres un asistente de negocio para una ferreteria. Responde en espanol y se breve.");
+    const system = String(req.body.system || "Eres un asistente de negocio para un comercio con punto de venta. Responde en espanol y se breve.");
     const prompt = String(req.body.prompt || "").slice(0, 8000);
     if (!prompt.trim()) return res.status(400).json({ error: "prompt requerido" });
     const texto = await llamarGemini({ system, prompt, maxTokens: Number(req.body.max_tokens) || 900 });

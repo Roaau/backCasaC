@@ -10,6 +10,7 @@ import MovimientoInventario from "../models/MovimientoInventario.js";
 import { Op } from "sequelize";
 import { resolverScopeSucursales, resolverSucursalOperativa, responderErrorScope } from "../utils/scope.js";
 import { rangoFechasReporte } from "../utils/fechas.js";
+import { cantidadValida } from "../utils/giros.js";
 
 export const listarCompras = async (req, res) => {
   try {
@@ -65,7 +66,34 @@ export const crearCompra = async (req, res) => {
   const t = await sequelize.transaction();
   try {
     const sucursal_id = await resolverSucursalOperativa(req);
-    const total = items.reduce((s, i) => s + Number(i.costo_unitario) * Number(i.cantidad), 0);
+
+    if (proveedor_id) {
+      const proveedor = await Proveedor.findOne({ where: { proveedor_id, empresa_id: req.usuario.empresa_id }, transaction: t });
+      if (!proveedor) {
+        const error = new Error('El proveedor no pertenece a tu empresa');
+        error.status = 403;
+        throw error;
+      }
+    }
+
+    // Valida cada renglon antes de tocar stock: producto de la empresa, cantidad y costo validos
+    const productosCompra = new Map();
+    for (const item of items) {
+      const costo = Number(item.costo_unitario);
+      if (!Number.isFinite(costo) || costo < 0) throw Object.assign(new Error('Costo unitario invalido'), { status: 400 });
+      let unidad = 'kg';
+      if (item.producto_id) {
+        const prod = await Producto.findOne({ where: { producto_id: item.producto_id, empresa_id: req.usuario.empresa_id }, transaction: t });
+        if (!prod) throw Object.assign(new Error(`El producto ${item.nombre_producto || item.producto_id} no pertenece a tu empresa`), { status: 403 });
+        productosCompra.set(Number(item.producto_id), prod);
+        unidad = prod.unidad_venta;
+      }
+      if (!cantidadValida(item.cantidad, unidad)) {
+        throw Object.assign(new Error(`Cantidad invalida en ${item.nombre_producto || 'un producto'}`), { status: 400 });
+      }
+    }
+
+    const total = Math.round(items.reduce((s, i) => s + Number(i.costo_unitario) * Number(i.cantidad), 0) * 100) / 100;
 
     const compra = await Compra.create({
       empresa_id:  req.usuario.empresa_id,
@@ -109,8 +137,8 @@ export const crearCompra = async (req, res) => {
         }
         await MovimientoInventario.create({
           producto_id: item.producto_id,
-          nombre_producto: item.nombre_producto,
-          codigo_barras: null,
+          nombre_producto: productosCompra.get(Number(item.producto_id))?.nombre ?? item.nombre_producto,
+          codigo_barras: productosCompra.get(Number(item.producto_id))?.codigo_barras ?? null,
           usuario_id: req.usuario.id,
           sucursal_id,
           tipo_movimiento: "ENTRADA",
@@ -121,9 +149,15 @@ export const crearCompra = async (req, res) => {
           observaciones: `Compra${folio ? ' ' + folio : ''}`,
           fecha: new Date()
         }, { transaction: t });
-        // Actualiza costo en producto
+        // Mantener stock global sincronizado, igual que ventas e inventario
+        await Producto.increment('stock_actual', {
+          by: cantidad,
+          where: { producto_id: item.producto_id, empresa_id: req.usuario.empresa_id },
+          transaction: t
+        });
+        // Actualiza costo en producto (antes usaba precio_costo, columna que no existe)
         await Producto.update(
-          { precio_costo: item.costo_unitario },
+          { precio_compra: Number(item.costo_unitario) },
           { where: { producto_id: item.producto_id, empresa_id: req.usuario.empresa_id }, transaction: t }
         );
       }
@@ -132,7 +166,8 @@ export const crearCompra = async (req, res) => {
     // Opcional: registrar egreso en la caja abierta
     if (descontar_de_caja) {
       const cajaAbierta = await CajaModel.findOne({
-        where: { sucursal_id, fecha_cierre: null }
+        where: { sucursal_id, fecha_cierre: null },
+        transaction: t
       });
       if (cajaAbierta) {
         await MovimientoCaja.create({
@@ -140,8 +175,9 @@ export const crearCompra = async (req, res) => {
           usuario_id:       req.usuario.id,
           tipo_movimiento:  'EGRESO',
           monto:            total,
-          concepto:         `Pago compra${folio ? ' ' + folio : ''}${proveedor_id ? ' — proveedor' : ''}`
-        });
+          concepto:         `Pago compra${folio ? ' ' + folio : ''}${proveedor_id ? ' — proveedor' : ''}`,
+          fecha:            new Date()
+        }, { transaction: t });
       }
     }
 
