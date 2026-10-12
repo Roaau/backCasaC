@@ -152,6 +152,15 @@ const otpLimit = rateLimit({
   message: { mensaje: 'Demasiadas solicitudes de codigo. Espera una hora.' }
 });
 
+// Lectura de codigo por foto: no pide sesion (la usa el celular), asi que tiene su propio limite
+const escanerLimit = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 120,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Demasiadas fotos en poco tiempo. Espera unos minutos.' }
+});
+
 const apiLimit = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 600,
@@ -271,7 +280,7 @@ app.use("/api/auth/login",               loginLimit);
 app.use("/api/auth/solicitar-registro", otpLimit);
 app.use("/api/auth/solicitar-reset",    otpLimit);
 app.use("/api/auth", authRoutes);
-app.use("/api/escaner", escanerRoutes);
+app.use("/api/escaner", escanerLimit, escanerRoutes);
 
 app.use("/api/productos", verificarToken, productosRoutes);
 app.use("/api/usuarios", verificarToken, usuariosRoutes);

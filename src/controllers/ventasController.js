@@ -19,6 +19,7 @@ import { rangoFechasReporte, esMismoDiaLocal, fechaLocalISO } from "../utils/fec
 import { validarLineaVenta, calcularTotalVenta } from "../utils/ventas.js";
 import { cfdiHabilitado } from "../config/features.js";
 import { cantidadValida } from "../utils/giros.js";
+import { regresarAInventario } from "../utils/inventario.js";
 
 const esCajaDeHoy = (caja) => esMismoDiaLocal(caja.fecha_apertura);
 
@@ -370,33 +371,17 @@ export async function revertirPedidoCancelado(req, pedido, transaction) {
       subtotal
     }, { transaction });
 
-    let stock = await StockSucursal.findOne({
-      where: { producto_id: v.producto_id, sucursal_id: pedido.sucursal_id },
-      transaction,
-      lock: true
-    });
-    const anterior = stock ? Number(stock.stock_actual) || 0 : 0;
-    if (stock) {
-      await stock.increment('stock_actual', { by: cantidad, transaction });
-    } else {
-      stock = await StockSucursal.create({ producto_id: v.producto_id, sucursal_id: pedido.sucursal_id, stock_actual: cantidad, stock_minimo: 0 }, { transaction });
-    }
-    // La venta descuenta tambien el total del producto; se regresa igual
-    await Producto.increment('stock_actual', { by: cantidad, where: { producto_id: v.producto_id }, transaction });
-    await MovimientoInventario.create({
+    await regresarAInventario({
       producto_id: v.producto_id,
       nombre_producto: v.nombre_producto,
       codigo_barras: v.codigo_barras || null,
-      usuario_id,
-      sucursal_id: pedido.sucursal_id,
-      tipo_movimiento: 'ENTRADA',
-      motivo: 'CANCELACION',
       cantidad,
-      stock_anterior: anterior,
-      stock_nuevo: anterior + cantidad,
+      sucursal_id: pedido.sucursal_id,
+      usuario_id,
+      motivo: 'CANCELACION',
       observaciones: `Pedido cancelado ${pedido.folio}`,
-      fecha: new Date()
-    }, { transaction });
+      transaction
+    });
   }
 
   if (caja) {

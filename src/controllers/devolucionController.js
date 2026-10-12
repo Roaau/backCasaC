@@ -2,11 +2,9 @@ import Venta from '../models/Venta.js';
 import DetalleVenta from '../models/DetalleVenta.js';
 import Devolucion from '../models/Devolucion.js';
 import DetalleDevolucion from '../models/DetalleDevolucion.js';
-import StockSucursal from '../models/StockSucursalModel.js';
 import Sucursal from '../models/SucursalModel.js';
 import Caja from '../models/CajaModel.js';
 import MovimientoCaja from '../models/MovimientoCaja.js';
-import MovimientoInventario from '../models/MovimientoInventario.js';
 import sequelize from '../config/database.js';
 import { Op } from 'sequelize';
 import {
@@ -17,14 +15,18 @@ import {
   validarSucursalEmpresa
 } from '../utils/scope.js';
 import { cantidadValida } from '../utils/giros.js';
+import { regresarAInventario } from '../utils/inventario.js';
 
 export const buscarVenta = async (req, res) => {
   try {
     const empresa_id = req.usuario.empresa_id;
-    const venta = await Venta.findOne({ where: { folio: req.params.folio } });
+    // El folio no es unico entre empresas: se busca solo dentro de las sucursales de esta empresa
+    const sucursales = await Sucursal.findAll({ where: { empresa_id }, attributes: ['sucursal_id'] });
+    const venta = await Venta.findOne({
+      where: { folio: req.params.folio, sucursal_id: { [Op.in]: sucursales.map(s => s.sucursal_id) } },
+      order: [['fecha', 'DESC']]
+    });
     if (!venta) return res.status(404).json({ error: 'Venta no encontrada' });
-    const sucursal = await Sucursal.findOne({ where: { sucursal_id: venta.sucursal_id, empresa_id } });
-    if (!sucursal) return res.status(404).json({ error: 'Venta no encontrada' });
     if (!esAdminEmpresa(req.usuario) && venta.sucursal_id !== req.usuario.sucursal_id) {
       return res.status(404).json({ error: 'Venta no encontrada' });
     }
@@ -129,37 +131,16 @@ export const crear = async (req, res) => {
       }, { transaction: t });
 
       if (d.producto_id && sucursal_id) {
-        let stock = await StockSucursal.findOne({
-          where: { producto_id: d.producto_id, sucursal_id },
-          transaction: t
-        });
-        const cantidad = Number(d.cantidad);
-        const stockAnterior = stock ? Number(stock.stock_actual) || 0 : 0;
-        const stockNuevo = stockAnterior + cantidad;
-        if (stock) {
-          await stock.update({ stock_actual: stockNuevo }, { transaction: t });
-        } else {
-          stock = await StockSucursal.create({
-            producto_id: d.producto_id,
-            sucursal_id,
-            stock_actual: stockNuevo,
-            stock_minimo: 0
-          }, { transaction: t });
-        }
-        await MovimientoInventario.create({
+        await regresarAInventario({
           producto_id: d.producto_id,
           nombre_producto: d.nombre_producto,
-          codigo_barras: null,
-          usuario_id,
+          cantidad: Number(d.cantidad),
           sucursal_id,
-          tipo_movimiento: "ENTRADA",
-          motivo: "DEVOLUCION",
-          cantidad,
-          stock_anterior: stockAnterior,
-          stock_nuevo: stockNuevo,
-          observaciones: `Devolucion de venta ${folio_venta}`,
-          fecha: new Date()
-        }, { transaction: t });
+          usuario_id,
+          motivo: 'DEVOLUCION',
+          observaciones: `Devolucion de venta ${venta.folio ?? folio_venta}`,
+          transaction: t
+        });
       }
     }
 
