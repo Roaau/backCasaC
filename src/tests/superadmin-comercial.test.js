@@ -43,6 +43,9 @@ jest.mock('../models/CatalogoGiro.js', () => ({
   default: { findAll: jest.fn(), findByPk: jest.fn(), create: jest.fn() }
 }));
 
+jest.mock('../models/SolicitudPlan.js', () => ({ __esModule: true, default: { findAll: jest.fn(), findByPk: jest.fn(), findOne: jest.fn(), create: jest.fn() } }));
+jest.mock('../models/PagoEmpresa.js', () => ({ __esModule: true, default: { findAll: jest.fn(), findOne: jest.fn(), create: jest.fn() } }));
+jest.mock('../models/PlataformaConfig.js', () => ({ __esModule: true, default: { upsert: jest.fn(), findAll: jest.fn() }, CLAVES_PAGO: ['pago_banco', 'pago_clabe', 'pago_titular'], datosDePago: jest.fn() }));
 jest.mock('../models/Auditoria.js', () => ({
   __esModule: true,
   default: { findAll: jest.fn() }
@@ -71,6 +74,7 @@ const { default: Auditoria } = require('../models/Auditoria.js');
 const { registrarAuditoria } = require('../utils/auditoria.js');
 const { actualizarComercial, listarAuditoriaSuperadmin, aprobarEmpresa, registrarPago } = require('../controllers/superadminController.js');
 const { fechaLocalISO } = require('../utils/fechas.js');
+const { default: PagoEmpresa } = require('../models/PagoEmpresa.js');
 const { sumarAFecha } = require('../utils/planes.js');
 
 const mockRes = () => {
@@ -159,6 +163,8 @@ describe('Superadmin comercial', () => {
     let res = mockRes();
     await registrarPago({ params: { id: '7' }, body: {}, usuario: { id: 1 } }, res);
     expect(anual.update).toHaveBeenCalledWith(expect.objectContaining({ fecha_vencimiento: sumarAFecha(futura, { meses: 12 }) }));
+    // queda en el historial: anual = 10 meses del precio
+    expect(PagoEmpresa.create).toHaveBeenCalledWith(expect.objectContaining({ empresa_id: 7, meses: 12, monto: 7000 }));
 
     const vencida = { ...empresaBase(), estado: 'vencida', fecha_vencimiento: '2020-01-01' };
     Empresa.findByPk.mockResolvedValue(vencida);

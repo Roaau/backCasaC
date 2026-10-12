@@ -15,6 +15,11 @@ import { leerFilasInventario } from "../utils/importarExcel.js";
 import { normalizarGiro } from "../utils/giros.js";
 import { cotizar, sumarAFecha, DIAS_PRUEBA, DIAS_BONO_REFERIDO } from "../utils/planes.js";
 import { fechaLocalISO } from "../utils/fechas.js";
+import SolicitudPlan from "../models/SolicitudPlan.js";
+import PagoEmpresa from "../models/PagoEmpresa.js";
+import PlataformaConfig, { CLAVES_PAGO, datosDePago } from "../models/PlataformaConfig.js";
+import { montoPorPeriodo } from "./planClienteController.js";
+import { notificarSolicitudResuelta } from "../services/emailService.js";
 
 const uploadCatalogo = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } }).single('archivo');
 
@@ -35,6 +40,11 @@ async function auditarSuperadmin(req, accion, empresa, detalle = {}) {
 export const listarEmpresas = async (req, res) => {
   try {
     const empresas = await Empresa.findAll({ order: [['empresa_id', 'DESC']] });
+    const porId = new Map(empresas.map(e => [e.empresa_id, e]));
+    const traidas = new Map();
+    for (const e of empresas) {
+      if (e.referido_por) traidas.set(e.referido_por, (traidas.get(e.referido_por) || 0) + 1);
+    }
 
     const result = await Promise.all(empresas.map(async (emp) => {
       const [total_sucursales, total_usuarios, actividad] = await Promise.all([
@@ -56,8 +66,10 @@ export const listarEmpresas = async (req, res) => {
       return {
         ...emp.toJSON(),
         cambio_giro: !!cambioGiro,
+        recomendada_por: emp.referido_por ? (porId.get(emp.referido_por)?.razon_social || `Empresa ${emp.referido_por}`) : null,
+        empresas_traidas: traidas.get(emp.empresa_id) || 0,
         precio_sugerido: cambioGiro
-          ? cotizar({ plan: 'basico', giro: emp.giro, segunda_sucursal: Number(emp.limite_sucursales) > 1 }).precio_mensual
+          ? cotizar({ plan: 'basico', giro: emp.giro, usuarios_extra: emp.usuarios_extra || 0 }).precio_mensual
           : null,
         total_sucursales,
         total_usuarios,
@@ -136,7 +148,8 @@ export const detalleEmpresa = async (req, res) => {
       usuarios:          usuarios.map(u => u.toJSON()),
       ventas_recientes:  ventas.map(v => v.toJSON()),
       totales_sucursal:  totalesPorSucursal,
-      movimientos:       movimientos.map(m => m.toJSON())
+      movimientos:       movimientos.map(m => m.toJSON()),
+      pagos:             (await PagoEmpresa.findAll({ where: { empresa_id: id }, order: [['fecha', 'DESC']], limit: 24 })).map(p => p.toJSON())
     });
   } catch (err) {
     res.status(500).json({ error: 'Error al obtener detalle', detalle: err.message });
@@ -487,11 +500,128 @@ export const registrarPago = async (req, res) => {
     const anterior = { fecha_vencimiento: empresa.fecha_vencimiento, estado: empresa.estado };
     const update = { fecha_vencimiento: sumarAFecha(base, { meses }), aviso_vencimiento_enviado: null };
     if (['vencida', 'prueba'].includes(empresa.estado)) update.estado = 'activa';
+    // Monto: lo que indique el superadmin, o lo que corresponde (anual = 10 meses por 12)
+    const montoBody = req.body?.monto !== undefined ? Number(req.body.monto) : null;
+    const monto = Number.isFinite(montoBody) && montoBody >= 0
+      ? montoBody
+      : (meses === 12 && empresa.periodo_pago === 'anual'
+        ? montoPorPeriodo(empresa.precio_mensual, 'anual')
+        : Number(empresa.precio_mensual || 0) * meses);
     await empresa.update(update);
+    await PagoEmpresa.create({
+      empresa_id: empresa.empresa_id, monto, meses, vence_hasta: update.fecha_vencimiento,
+      registrado_por: req.usuario?.id ?? null, notas: req.body?.notas ? String(req.body.notas).slice(0, 300) : null
+    });
     await auditarSuperadmin(req, 'SUPERADMIN_EMPRESA_PAGO', empresa, { meses, anterior, nuevo: update });
     res.json({ mensaje: `Pago registrado: vence el ${update.fecha_vencimiento}`, fecha_vencimiento: update.fecha_vencimiento });
   } catch (e) {
     res.status(500).json({ error: 'Error al registrar el pago', detalle: e.message });
+  }
+};
+
+// GET /api/superadmin/solicitudes?estado=pendiente
+export const listarSolicitudes = async (req, res) => {
+  try {
+    const estado = ['pendiente', 'aprobada', 'rechazada'].includes(req.query.estado) ? req.query.estado : 'pendiente';
+    const solicitudes = await SolicitudPlan.findAll({ where: { estado }, order: [['creada_en', 'DESC']], limit: 100 });
+    const empresas = await Empresa.findAll({
+      where: { empresa_id: [...new Set(solicitudes.map(s => s.empresa_id))] },
+      attributes: ['empresa_id', 'razon_social', 'plan', 'nivel', 'periodo_pago']
+    });
+    const porId = new Map(empresas.map(e => [e.empresa_id, e]));
+    res.json(solicitudes.map(s => ({ ...s.toJSON(), razon_social: porId.get(s.empresa_id)?.razon_social || '' })));
+  } catch (e) {
+    res.status(500).json({ error: 'Error al listar solicitudes', detalle: e.message });
+  }
+};
+
+// PUT /api/superadmin/solicitudes/:id/aprobar — aplica el plan solicitado (cuando ya llego el pago)
+export const aprobarSolicitud = async (req, res) => {
+  const t = await sequelize.transaction();
+  try {
+    const solicitud = await SolicitudPlan.findByPk(req.params.id, { transaction: t, lock: true });
+    if (!solicitud) { await t.rollback(); return res.status(404).json({ error: 'Solicitud no encontrada' }); }
+    if (solicitud.estado !== 'pendiente') { await t.rollback(); return res.status(409).json({ error: 'La solicitud ya fue resuelta' }); }
+    const empresa = await Empresa.findByPk(solicitud.empresa_id, { transaction: t });
+    if (!empresa) { await t.rollback(); return res.status(404).json({ error: 'Empresa no encontrada' }); }
+
+    const anterior = {
+      plan: empresa.plan, periodo_pago: empresa.periodo_pago, precio_mensual: Number(empresa.precio_mensual),
+      limite_sucursales: empresa.limite_sucursales, limite_usuarios: empresa.limite_usuarios, usuarios_extra: empresa.usuarios_extra
+    };
+    const nuevo = {
+      plan: solicitud.plan_nuevo,
+      periodo_pago: solicitud.periodo_nuevo,
+      precio_mensual: Number(solicitud.precio_nuevo),
+      limite_sucursales: solicitud.limite_sucursales_nuevo,
+      limite_usuarios: solicitud.limite_usuarios_nuevo,
+      usuarios_extra: solicitud.usuarios_extra_nuevo,
+    };
+    if (nuevo.plan !== empresa.plan) {
+      nuevo.ia_limite_diario = cotizar({ plan: nuevo.plan, giro: empresa.giro }).ia_limite_diario;
+    }
+    await empresa.update(nuevo, { transaction: t });
+    await solicitud.update({ estado: 'aprobada', resuelta_por: req.usuario?.id ?? null, resuelta_en: new Date() }, { transaction: t });
+    await t.commit();
+
+    await auditarSuperadmin(req, 'SUPERADMIN_SOLICITUD_APROBAR', empresa, { solicitud: solicitud.descripcion, anterior, nuevo });
+    notificarSolicitudResuelta({
+      destinatario: empresa.email_contacto, razon_social: empresa.razon_social,
+      descripcion: solicitud.descripcion, aprobada: true, precio_nuevo: nuevo.precio_mensual
+    }).catch(() => {});
+    res.json({ mensaje: `Aplicado a ${empresa.razon_social}: ${solicitud.descripcion}` });
+  } catch (e) {
+    await t.rollback();
+    res.status(500).json({ error: 'Error al aprobar la solicitud', detalle: e.message });
+  }
+};
+
+// PUT /api/superadmin/solicitudes/:id/rechazar  { motivo }
+export const rechazarSolicitud = async (req, res) => {
+  try {
+    const solicitud = await SolicitudPlan.findByPk(req.params.id);
+    if (!solicitud) return res.status(404).json({ error: 'Solicitud no encontrada' });
+    if (solicitud.estado !== 'pendiente') return res.status(409).json({ error: 'La solicitud ya fue resuelta' });
+    const motivo = req.body?.motivo ? String(req.body.motivo).trim().slice(0, 300) : null;
+    await solicitud.update({ estado: 'rechazada', motivo, resuelta_por: req.usuario?.id ?? null, resuelta_en: new Date() });
+    const empresa = await Empresa.findByPk(solicitud.empresa_id);
+    if (empresa) {
+      await auditarSuperadmin(req, 'SUPERADMIN_SOLICITUD_RECHAZAR', empresa, { solicitud: solicitud.descripcion, motivo });
+      notificarSolicitudResuelta({
+        destinatario: empresa.email_contacto, razon_social: empresa.razon_social,
+        descripcion: solicitud.descripcion, aprobada: false, motivo
+      }).catch(() => {});
+    }
+    res.json({ mensaje: 'Solicitud rechazada' });
+  } catch (e) {
+    res.status(500).json({ error: 'Error al rechazar la solicitud', detalle: e.message });
+  }
+};
+
+// GET/PUT /api/superadmin/config-pagos — datos para transferir que ven los clientes en Tu plan
+export const getConfigPagos = async (req, res) => {
+  try {
+    res.json(await datosDePago());
+  } catch (e) {
+    res.status(500).json({ error: 'Error al leer los datos de pago' });
+  }
+};
+
+export const actualizarConfigPagos = async (req, res) => {
+  try {
+    const valores = { pago_banco: req.body?.banco, pago_clabe: req.body?.clabe, pago_titular: req.body?.titular };
+    if (valores.pago_clabe && !/^\d{18}$/.test(String(valores.pago_clabe).replace(/\s/g, ''))) {
+      return res.status(400).json({ error: 'La CLABE debe tener 18 dígitos' });
+    }
+    for (const clave of CLAVES_PAGO) {
+      if (valores[clave] === undefined) continue;
+      const valor = valores[clave] === null ? null : String(valores[clave]).replace(clave === 'pago_clabe' ? /\s/g : /^\s+|\s+$/g, '').slice(0, 120) || null;
+      await PlataformaConfig.upsert({ clave, valor });
+    }
+    await registrarAuditoria(req, { accion: 'SUPERADMIN_CONFIG_PAGOS', entidad: 'plataforma_config', detalle: await datosDePago() });
+    res.json({ mensaje: 'Datos de pago guardados', ...(await datosDePago()) });
+  } catch (e) {
+    res.status(500).json({ error: 'Error al guardar los datos de pago', detalle: e.message });
   }
 };
 

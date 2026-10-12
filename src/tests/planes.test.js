@@ -20,9 +20,8 @@ describe('Planes por giro', () => {
     expect(multi).toEqual(expect.objectContaining({ limite_sucursales: 3, limite_usuarios: 15, precio_mensual: 1647 }));
   });
 
-  test('extras: segunda sucursal solo en Esencial/Comercio y usuarios extra con tope', () => {
-    expect(cotizar({ giro: 'abarrotes', segunda_sucursal: true })).toEqual(expect.objectContaining({ limite_sucursales: 2, precio_mensual: 798 }));
-    expect(cotizar({ giro: 'farmacia', segunda_sucursal: true }).limite_sucursales).toBe(1);
+  test('el plan de 1 sucursal siempre es 1 sucursal y los usuarios extra tienen tope', () => {
+    expect(cotizar({ giro: 'abarrotes', segunda_sucursal: true }).limite_sucursales).toBe(1);
     const muchos = cotizar({ giro: 'abarrotes', usuarios_extra: 999 });
     expect(muchos.usuarios_extra).toBe(20);
     expect(muchos.precio_mensual).toBe(349 + 20 * 99);

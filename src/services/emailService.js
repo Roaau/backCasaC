@@ -359,3 +359,43 @@ export const notificarVencimientoProximo = async ({ destinatario, razon_social, 
 </body></html>`,
   });
 };
+
+const pesos = (n) => `$${Number(n || 0).toLocaleString("es-MX", { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`;
+
+const correoSimple = (titulo, cuerpo) => `<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8"></head>
+<body style="margin:0;padding:0;background:#fafaf7;font-family:Arial,sans-serif;color:#1c1c1a;">
+<div style="padding:32px 16px;">
+  <div style="max-width:480px;margin:0 auto;background:#fff;border:1px solid #e6e4de;border-radius:12px;padding:32px;">
+    <p style="margin:0 0 4px;font-size:13px;color:#6b6b66;">SC POS</p>
+    <h1 style="margin:0 0 16px;font-size:20px;font-weight:600;">${titulo}</h1>
+    ${cuerpo}
+  </div>
+</div>
+</body></html>`;
+
+// ── Al superadmin: un negocio pidio cambiar su plan ──────────────────────────
+export const notificarNuevaSolicitudPlan = async ({ razon_social, descripcion, precio_actual, precio_nuevo }) => {
+  if (!process.env.BREVO_API_KEY) return;
+  await enviarBrevo({
+    to: process.env.SUPERADMIN_EMAIL || SENDER.email,
+    subject: `Solicitud de plan: ${razon_social}`,
+    html: correoSimple("Nueva solicitud de plan", `
+      <p style="margin:0 0 12px;font-size:15px;line-height:1.5;"><strong>${razon_social}</strong> pidió: ${descripcion}.</p>
+      <p style="margin:0 0 12px;font-size:15px;">Pasa de ${pesos(precio_actual)} a <strong>${pesos(precio_nuevo)}</strong> al mes.</p>
+      <p style="margin:0;font-size:13px;color:#6b6b66;">Apruébala en el panel superadmin cuando recibas el pago.</p>`),
+  });
+};
+
+// ── Al cliente: su solicitud fue aprobada o rechazada ────────────────────────
+export const notificarSolicitudResuelta = async ({ destinatario, razon_social, descripcion, aprobada, precio_nuevo, motivo }) => {
+  if (!process.env.BREVO_API_KEY || !destinatario) return;
+  await enviarBrevo({
+    to: destinatario,
+    subject: aprobada ? "Tu cambio de plan ya está activo — SC POS" : "Sobre tu solicitud de plan — SC POS",
+    html: correoSimple(aprobada ? "Tu cambio de plan ya está activo" : "No pudimos aplicar tu solicitud", aprobada
+      ? `<p style="margin:0 0 12px;font-size:15px;line-height:1.5;">Aplicamos en <strong>${razon_social}</strong>: ${descripcion}.</p>
+         <p style="margin:0;font-size:15px;">Tu nuevo precio es <strong>${pesos(precio_nuevo)}</strong> al mes.</p>`
+      : `<p style="margin:0 0 12px;font-size:15px;line-height:1.5;">Tu solicitud "${descripcion}" no se aplicó.</p>
+         ${motivo ? `<p style="margin:0;font-size:15px;">Motivo: ${motivo}</p>` : ''}`),
+  });
+};

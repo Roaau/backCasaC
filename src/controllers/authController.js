@@ -184,7 +184,7 @@ export const registro = async (req, res) => {
     nombre, usuario, contrasena, codigo_invitacion,
     rfc, razon_social, regimen_fiscal,
     email, codigo_verificacion,
-    plan, giro, sucursales, usuarios_extra, segunda_sucursal, periodo, codigo_referido
+    plan, giro, sucursales, periodo, codigo_referido
   } = req.body;
 
   if (!nombre || !usuario || !contrasena) {
@@ -267,12 +267,9 @@ export const registro = async (req, res) => {
       // Marca el código como usado dentro de la transacción
       await SolicitudRegistro.update({ usado: true }, { where: { id: solicitud.id }, transaction: t });
 
-      // Precio y limites salen de la lista de precios (utils/planes.js), nunca del navegador
-      const cotizacion = cotizar({
-        plan, giro, sucursales, usuarios_extra,
-        segunda_sucursal: segunda_sucursal === true || segunda_sucursal === 'true',
-        periodo
-      });
+      // Precio y limites salen de la lista de precios (utils/planes.js), nunca del navegador.
+      // Usuarios extra o cambios de plan se piden despues desde Tu plan (solicitudes).
+      const cotizacion = cotizar({ plan, giro, sucursales, periodo });
       const estadoInicial = 'pendiente';
 
       // Codigo de quien lo recomendo (opcional). Uno invalido no bloquea el registro.

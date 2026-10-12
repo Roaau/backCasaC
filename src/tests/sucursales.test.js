@@ -123,7 +123,7 @@ describe('Sucursales - seguridad multiempresa', () => {
     expect(tx.rollback).toHaveBeenCalled();
     expect(res.status).toHaveBeenCalledWith(403);
     expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
-      error: 'Tu plan llego al limite de sucursales activas.'
+      error: expect.stringContaining('límite de sucursales')
     }));
   });
 

@@ -26,6 +26,7 @@ const Empresa = sequelize.define('Empresa', {
   referido_por:    { type: DataTypes.INTEGER, allowNull: true },
   bono_referido_aplicado: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
   ia_limite_diario: { type: DataTypes.INTEGER, allowNull: true },
+  usuarios_extra:  { type: DataTypes.INTEGER, allowNull: false, defaultValue: 0 },
   aviso_vencimiento_enviado: { type: DataTypes.DATEONLY, allowNull: true },
   email_contacto: { type: DataTypes.STRING(255), allowNull: true, unique: true },
   notas_admin:     { type: DataTypes.TEXT, allowNull: true },

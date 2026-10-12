@@ -7,19 +7,19 @@ import { GIROS, normalizarGiro } from "./giros.js";
 // Plan de 1 sucursal: el precio depende del giro (que tan complejo es el negocio)
 export const NIVELES = {
   esencial: {
-    nombre: "Esencial", precio: 349, usuarios: 2, configuracion: 0, ia_diaria: 10, segunda_sucursal: true,
+    nombre: "Esencial", precio: 349, usuarios: 2, configuracion: 0, ia_diaria: 10,
     giros: ["abarrotes", "dulceria", "fruteria", "panaderia", "forrajeria"],
   },
   comercio: {
-    nombre: "Comercio", precio: 499, usuarios: 3, configuracion: 0, ia_diaria: 15, segunda_sucursal: true,
+    nombre: "Comercio", precio: 499, usuarios: 3, configuracion: 0, ia_diaria: 15,
     giros: ["papeleria", "carniceria", "mascotas", "cosmeticos", "naturista", "regalos", "gorras", "vinos"],
   },
   especializado: {
-    nombre: "Especializado", precio: 699, usuarios: 5, configuracion: 999, ia_diaria: 25, segunda_sucursal: false,
+    nombre: "Especializado", precio: 699, usuarios: 5, configuracion: 999, ia_diaria: 25,
     giros: ["minisuper", "ropa", "zapateria", "joyeria", "optica", "electronica", "general"],
   },
   catalogo_grande: {
-    nombre: "Catálogo grande", precio: 849, usuarios: 5, configuracion: 999, ia_diaria: 25, segunda_sucursal: false,
+    nombre: "Catálogo grande", precio: 849, usuarios: 5, configuracion: 999, ia_diaria: 25,
     giros: ["farmacia", "ferreteria", "materiales", "refaccionaria"],
   },
 };
@@ -31,8 +31,6 @@ export const PLAN_MULTI = { nombre: "Multi", precio_sucursal: 549, min_sucursale
 export const EXTRAS = {
   usuario: 99,            // por usuario adicional al mes
   max_usuarios_extra: 20,
-  segunda_sucursal: 449,  // solo Esencial y Comercio
-  usuarios_segunda_sucursal: 2,
 };
 
 export const MESES_GRATIS_ANUAL = 2;
@@ -55,14 +53,14 @@ const entero = (valor, min, max) => {
  * Calcula el plan a partir de lo que elige el cliente. El servidor SIEMPRE usa esto:
  * nunca toma precio ni limites del navegador.
  */
-export function cotizar({ plan = "basico", giro, sucursales, usuarios_extra = 0, segunda_sucursal = false, periodo = "mensual" } = {}) {
+// usuarios_extra no se ofrece en el registro: se agregan despues con una solicitud del admin (Tu plan)
+export function cotizar({ plan = "basico", giro, sucursales, usuarios_extra = 0, periodo = "mensual" } = {}) {
   const planId = PLANES.includes(String(plan).toLowerCase()) ? String(plan).toLowerCase() : "basico";
   const nivelId = nivelDeGiro(giro);
   const nivel = NIVELES[nivelId];
   const extrasUsuarios = entero(usuarios_extra, 0, EXTRAS.max_usuarios_extra);
 
   let nombre, limiteSucursales, limiteUsuarios, precio, configuracion, iaDiaria;
-  let conSegunda = false;
   if (planId === "pro") {
     ({ nombre, sucursales: limiteSucursales, usuarios: limiteUsuarios, precio, configuracion, ia_diaria: iaDiaria } = PLAN_PRO);
   } else if (planId === "multisucursal") {
@@ -73,11 +71,11 @@ export function cotizar({ plan = "basico", giro, sucursales, usuarios_extra = 0,
     configuracion = PLAN_MULTI.configuracion;
     iaDiaria = PLAN_MULTI.ia_diaria;
   } else {
-    conSegunda = segunda_sucursal === true && nivel.segunda_sucursal;
+    // 2 sucursales = plan Pro (no hay "segunda sucursal" suelta para no competir con Pro)
     nombre = nivel.nombre;
-    limiteSucursales = conSegunda ? 2 : 1;
-    limiteUsuarios = nivel.usuarios + (conSegunda ? EXTRAS.usuarios_segunda_sucursal : 0);
-    precio = nivel.precio + (conSegunda ? EXTRAS.segunda_sucursal : 0);
+    limiteSucursales = 1;
+    limiteUsuarios = nivel.usuarios;
+    precio = nivel.precio;
     configuracion = nivel.configuracion;
     iaDiaria = nivel.ia_diaria;
   }
@@ -96,7 +94,6 @@ export function cotizar({ plan = "basico", giro, sucursales, usuarios_extra = 0,
     limite_sucursales: limiteSucursales,
     limite_usuarios: limiteUsuarios,
     usuarios_extra: extrasUsuarios,
-    segunda_sucursal: conSegunda,
     precio_mensual: precio,
     configuracion,
     periodo: anual ? "anual" : "mensual",
@@ -113,7 +110,6 @@ export function catalogoPublico() {
   return {
     niveles: Object.entries(NIVELES).map(([clave, n]) => ({
       clave, nombre: n.nombre, precio: n.precio, usuarios: n.usuarios, configuracion: n.configuracion,
-      segunda_sucursal: n.segunda_sucursal,
       giros: n.giros.map(g => ({ clave: g, nombre: GIROS[g] })),
     })),
     pro: PLAN_PRO,

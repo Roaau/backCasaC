@@ -6,7 +6,8 @@ const router = Router();
 
 router.get("/", (req, res) => res.json(catalogoPublico()));
 
-// GET /api/planes/cotizar?plan=basico&giro=abarrotes&periodo=anual&usuarios_extra=1&segunda_sucursal=true&sucursales=3
+// GET /api/planes/cotizar?plan=basico&giro=abarrotes&periodo=anual&sucursales=3&usuarios_extra=1
+// (usuarios_extra lo usa el superadmin para no perder los que ya paga una empresa)
 router.get("/cotizar", (req, res) => {
   const q = req.query;
   res.json(cotizar({
@@ -14,7 +15,6 @@ router.get("/cotizar", (req, res) => {
     giro: q.giro,
     sucursales: q.sucursales,
     usuarios_extra: q.usuarios_extra,
-    segunda_sucursal: q.segunda_sucursal === "true",
     periodo: q.periodo
   }));
 });

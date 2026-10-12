@@ -29,7 +29,7 @@ export const validarLimiteSucursales = async (empresa_id, incremento = 1, option
   });
 
   if (actuales + incremento > limite) {
-    throw errorLimite("Tu plan llego al limite de sucursales activas.", {
+    throw errorLimite("Tu plan llegó al límite de sucursales. Puedes cambiar a Pro o Multi en Usuarios → Tu plan.", {
       plan: empresa.plan,
       limite,
       actuales
@@ -51,7 +51,7 @@ export const validarLimiteUsuarios = async (empresa_id, incremento = 1, options 
   });
 
   if (actuales + incremento > limite) {
-    throw errorLimite(`Tu plan llegó al límite de usuarios activos. Puedes agregar usuarios extra por $${EXTRAS.usuario} al mes cada uno: pídelo a soporte.`, {
+    throw errorLimite(`Tu plan llegó al límite de usuarios activos. Puedes pedir usuarios extra (${EXTRAS.usuario} al mes cada uno) en Usuarios → Tu plan.`, {
       plan: empresa.plan,
       limite,
       actuales
