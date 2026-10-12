@@ -27,7 +27,10 @@ export const getMiPlan = async (req, res) => {
         'limite_sucursales',
         'limite_usuarios',
         'email_contacto',
-        'giro'
+        'giro',
+        'nivel',
+        'periodo_pago',
+        'codigo_referido'
       ]
     });
     if (!empresa) return res.status(404).json({ error: 'Empresa no encontrada' });

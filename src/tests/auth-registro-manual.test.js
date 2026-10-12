@@ -84,7 +84,7 @@ describe('Auth registro con aprobacion manual', () => {
     mockTransaction.rollback.mockClear();
   });
 
-  test('crea empresa pendiente aunque el cliente mande prueba y normaliza plan comercial', async () => {
+  test('crea empresa pendiente y calcula el plan en el servidor aunque el navegador mande otros datos', async () => {
     Usuario.findOne.mockResolvedValue(null);
     Empresa.findOne.mockResolvedValue(null);
     SolicitudRegistro.findOne.mockResolvedValue({ id: 55 });
@@ -123,12 +123,14 @@ describe('Auth registro con aprobacion manual', () => {
       }
     }, res);
 
+    // Precio y limites de la lista (utils/planes.js), ignorando precio_mensual/limites del body
     expect(Empresa.create).toHaveBeenCalledWith(expect.objectContaining({
       estado: 'pendiente',
       plan: 'pro',
-      precio_mensual: 1400,
+      precio_mensual: 1199,
       limite_sucursales: 2,
-      limite_usuarios: 10
+      limite_usuarios: 10,
+      periodo_pago: 'mensual'
     }), expect.objectContaining({ transaction: mockTransaction }));
     expect(mockTransaction.commit).toHaveBeenCalled();
     expect(res.status).toHaveBeenCalledWith(201);

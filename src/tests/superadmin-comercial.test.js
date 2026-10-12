@@ -69,7 +69,9 @@ jest.mock('xlsx', () => ({ read: jest.fn(), utils: { sheet_to_json: jest.fn() } 
 const { default: Empresa } = require('../models/EmpresaModel.js');
 const { default: Auditoria } = require('../models/Auditoria.js');
 const { registrarAuditoria } = require('../utils/auditoria.js');
-const { actualizarComercial, listarAuditoriaSuperadmin } = require('../controllers/superadminController.js');
+const { actualizarComercial, listarAuditoriaSuperadmin, aprobarEmpresa, registrarPago } = require('../controllers/superadminController.js');
+const { fechaLocalISO } = require('../utils/fechas.js');
+const { sumarAFecha } = require('../utils/planes.js');
 
 const mockRes = () => {
   const res = {};
@@ -118,34 +120,54 @@ describe('Superadmin comercial', () => {
     expect(res.json).toHaveBeenCalledWith({ error: 'Precio mensual invalido' });
   });
 
-  test('rechaza plan basico por debajo del precio oficial', async () => {
-    Empresa.findByPk.mockResolvedValue(empresaBase());
-    const req = {
-      params: { id: '7' },
-      body: { plan: 'basico', precio_mensual: 699, limite_sucursales: 1, limite_usuarios: 5 },
-      usuario: { id: 1, es_superadmin: true }
-    };
+  test('permite dar descuento en el precio (ya no hay minimo fijo)', async () => {
+    const empresa = empresaBase();
+    Empresa.findByPk.mockResolvedValue(empresa);
     const res = mockRes();
-
-    await actualizarComercial(req, res);
-
-    expect(res.status).toHaveBeenCalledWith(400);
-    expect(res.json).toHaveBeenCalledWith({ error: 'El plan Basico debe costar al menos 700 MXN mensuales' });
+    await actualizarComercial({ params: { id: '7' }, body: { plan: 'basico', precio_mensual: 299, limite_sucursales: 1 }, usuario: { id: 1 } }, res);
+    expect(empresa.update).toHaveBeenCalledWith(expect.objectContaining({ precio_mensual: 299 }));
   });
 
-  test('rechaza multi-sucursal cuando el precio no cubre las sucursales', async () => {
+  test('rechaza multi-sucursal con menos de 3 sucursales', async () => {
     Empresa.findByPk.mockResolvedValue(empresaBase());
-    const req = {
-      params: { id: '7' },
-      body: { plan: 'multisucursal', precio_mensual: 2000, limite_sucursales: 3, limite_usuarios: 15 },
-      usuario: { id: 1, es_superadmin: true }
-    };
+    const res = mockRes();
+    await actualizarComercial({ params: { id: '7' }, body: { plan: 'multisucursal', limite_sucursales: 2 }, usuario: { id: 1 } }, res);
+    expect(res.status).toHaveBeenCalledWith(400);
+  });
+
+  test('al aprobar empieza la prueba de 30 dias y aplica el bono de referido a los dos', async () => {
+    const hoy = fechaLocalISO();
+    const nueva = { ...empresaBase(), estado: 'pendiente', referido_por: 3, bono_referido_aplicado: false };
+    const quienRecomendo = { empresa_id: 3, razon_social: 'Amigo', fecha_vencimiento: null, update: jest.fn() };
+    Empresa.findByPk.mockImplementation(async (id) => (String(id) === '3' ? quienRecomendo : nueva));
     const res = mockRes();
 
-    await actualizarComercial(req, res);
+    await aprobarEmpresa({ params: { id: '7' }, body: {}, usuario: { id: 1 } }, res);
 
-    expect(res.status).toHaveBeenCalledWith(400);
-    expect(res.json).toHaveBeenCalledWith({ error: 'El plan Multi-sucursal debe costar al menos 2250 MXN mensuales' });
+    expect(nueva.update).toHaveBeenCalledWith(expect.objectContaining({
+      estado: 'activa',
+      fecha_vencimiento: sumarAFecha(hoy, { dias: 60 }),
+      bono_referido_aplicado: true
+    }));
+    expect(quienRecomendo.update).toHaveBeenCalledWith({ fecha_vencimiento: sumarAFecha(hoy, { dias: 30 }) });
+  });
+
+  test('registrar pago extiende desde el vencimiento si aun no vence y reactiva vencidas', async () => {
+    const futura = sumarAFecha(fechaLocalISO(), { dias: 5 });
+    const anual = { ...empresaBase(), periodo_pago: 'anual', fecha_vencimiento: futura };
+    Empresa.findByPk.mockResolvedValue(anual);
+    let res = mockRes();
+    await registrarPago({ params: { id: '7' }, body: {}, usuario: { id: 1 } }, res);
+    expect(anual.update).toHaveBeenCalledWith(expect.objectContaining({ fecha_vencimiento: sumarAFecha(futura, { meses: 12 }) }));
+
+    const vencida = { ...empresaBase(), estado: 'vencida', fecha_vencimiento: '2020-01-01' };
+    Empresa.findByPk.mockResolvedValue(vencida);
+    res = mockRes();
+    await registrarPago({ params: { id: '7' }, body: { meses: 1 }, usuario: { id: 1 } }, res);
+    expect(vencida.update).toHaveBeenCalledWith(expect.objectContaining({
+      estado: 'activa',
+      fecha_vencimiento: sumarAFecha(fechaLocalISO(), { meses: 1 })
+    }));
   });
 
   test('actualiza plan y registra auditoria', async () => {

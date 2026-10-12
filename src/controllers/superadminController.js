@@ -13,6 +13,8 @@ import multer from "multer";
 import { registrarAuditoria } from "../utils/auditoria.js";
 import { leerFilasInventario } from "../utils/importarExcel.js";
 import { normalizarGiro } from "../utils/giros.js";
+import { cotizar, sumarAFecha, DIAS_PRUEBA, DIAS_BONO_REFERIDO } from "../utils/planes.js";
+import { fechaLocalISO } from "../utils/fechas.js";
 
 const uploadCatalogo = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } }).single('archivo');
 
@@ -50,8 +52,13 @@ export const listarEmpresas = async (req, res) => {
         `, { replacements: { empresa_id: emp.empresa_id }, type: sequelize.QueryTypes.SELECT })
       ]);
       const resumen = actividad?.[0] || {};
+      const cambioGiro = emp.giro_registro && emp.giro !== emp.giro_registro && emp.plan === 'basico';
       return {
         ...emp.toJSON(),
+        cambio_giro: !!cambioGiro,
+        precio_sugerido: cambioGiro
+          ? cotizar({ plan: 'basico', giro: emp.giro, segunda_sucursal: Number(emp.limite_sucursales) > 1 }).precio_mensual
+          : null,
         total_sucursales,
         total_usuarios,
         ventas_30d: Number(resumen.ventas_30d) || 0,
@@ -145,8 +152,30 @@ export const aprobarEmpresa = async (req, res) => {
     if (!empresa) return res.status(404).json({ error: 'Empresa no encontrada' });
 
     const estadoAnterior = empresa.estado;
-    await empresa.update({ estado: 'activa', notas_admin: notas || empresa.notas_admin });
-    await auditarSuperadmin(req, 'SUPERADMIN_EMPRESA_APROBAR', empresa, { estado_anterior: estadoAnterior, estado_nuevo: 'activa', notas });
+    const update = { estado: 'activa', notas_admin: notas || empresa.notas_admin };
+    let bono = null;
+    // Prueba gratis: corre desde hoy si la empresa todavia no tiene vencimiento
+    if (!empresa.fecha_vencimiento) {
+      update.fecha_vencimiento = sumarAFecha(fechaLocalISO(), { dias: DIAS_PRUEBA });
+    }
+    // Recomienda y gana: un mes extra para los dos, una sola vez
+    if (empresa.referido_por && !empresa.bono_referido_aplicado) {
+      update.fecha_vencimiento = sumarAFecha(update.fecha_vencimiento || empresa.fecha_vencimiento, { dias: DIAS_BONO_REFERIDO });
+      update.bono_referido_aplicado = true;
+      const quienRecomendo = await Empresa.findByPk(empresa.referido_por);
+      if (quienRecomendo) {
+        const base = quienRecomendo.fecha_vencimiento && quienRecomendo.fecha_vencimiento > fechaLocalISO()
+          ? quienRecomendo.fecha_vencimiento
+          : fechaLocalISO();
+        await quienRecomendo.update({ fecha_vencimiento: sumarAFecha(base, { dias: DIAS_BONO_REFERIDO }) });
+        bono = { empresa_id: quienRecomendo.empresa_id, razon_social: quienRecomendo.razon_social };
+      }
+    }
+    await empresa.update(update);
+    await auditarSuperadmin(req, 'SUPERADMIN_EMPRESA_APROBAR', empresa, {
+      estado_anterior: estadoAnterior, estado_nuevo: 'activa', notas,
+      vence: update.fecha_vencimiento || empresa.fecha_vencimiento, bono_referido: bono
+    });
 
     if (empresa.email_contacto) {
       notificarEmpresaAprobada({
@@ -411,29 +440,58 @@ export const actualizarComercial = async (req, res) => {
       limite_sucursales !== undefined ||
       limite_usuarios !== undefined;
 
-    if (cambiaPlanComercial && planFinal === 'basico') {
-      if (limiteSucursalesFinal > 1) return res.status(400).json({ error: 'El plan Basico permite maximo 1 sucursal' });
-      if (limiteUsuariosFinal > 5) return res.status(400).json({ error: 'El plan Basico permite maximo 5 usuarios' });
-      if (precioFinal < 700) return res.status(400).json({ error: 'El plan Basico debe costar al menos 700 MXN mensuales' });
+    // Los precios de lista estan en utils/planes.js; aqui el superadmin puede dar descuentos,
+    // por eso no hay minimo de precio. Solo se cuida que las sucursales correspondan al plan.
+    if (cambiaPlanComercial && planFinal === 'basico' && limiteSucursalesFinal > 2) {
+      return res.status(400).json({ error: 'El plan de 1 sucursal permite como maximo 2 sucursales (con la segunda sucursal)' });
     }
-
-    if (cambiaPlanComercial && planFinal === 'pro') {
-      if (limiteSucursalesFinal > 2) return res.status(400).json({ error: 'El plan Pro permite maximo 2 sucursales' });
-      if (limiteUsuariosFinal > 10) return res.status(400).json({ error: 'El plan Pro permite maximo 10 usuarios' });
-      if (precioFinal < 1400) return res.status(400).json({ error: 'El plan Pro debe costar al menos 1400 MXN mensuales' });
+    if (cambiaPlanComercial && planFinal === 'pro' && limiteSucursalesFinal > 2) {
+      return res.status(400).json({ error: 'El plan Pro permite maximo 2 sucursales' });
     }
-
-    if (cambiaPlanComercial && planFinal === 'multisucursal') {
-      if (limiteSucursalesFinal < 3) return res.status(400).json({ error: 'El plan Multi-sucursal requiere minimo 3 sucursales' });
-      const minimo = limiteSucursalesFinal * 750;
-      if (precioFinal < minimo) return res.status(400).json({ error: `El plan Multi-sucursal debe costar al menos ${minimo} MXN mensuales` });
+    if (cambiaPlanComercial && planFinal === 'multisucursal' && limiteSucursalesFinal < 3) {
+      return res.status(400).json({ error: 'El plan Multi-sucursal requiere minimo 3 sucursales' });
     }
+    if (req.body.periodo_pago !== undefined) {
+      if (!['mensual', 'anual'].includes(req.body.periodo_pago)) return res.status(400).json({ error: 'Periodo de pago invalido' });
+      update.periodo_pago = req.body.periodo_pago;
+    }
+    if (req.body.ia_limite_diario !== undefined) {
+      const ia = req.body.ia_limite_diario === null || req.body.ia_limite_diario === '' ? null : Number(req.body.ia_limite_diario);
+      if (ia !== null && (!Number.isInteger(ia) || ia < 0 || ia > 500)) return res.status(400).json({ error: 'Limite de IA invalido' });
+      update.ia_limite_diario = ia;
+    }
+    void precioFinal;
+    void limiteUsuariosFinal;
 
     await empresa.update(update);
     await auditarSuperadmin(req, 'SUPERADMIN_EMPRESA_COMERCIAL', empresa, { anterior, nuevo: update });
     res.json({ mensaje: 'Configuracion comercial actualizada', empresa });
   } catch (e) {
     res.status(500).json({ error: 'Error al actualizar configuracion comercial', detalle: e.message });
+  }
+};
+
+// POST /api/superadmin/empresas/:id/pago  { meses? }  — registra un pago recibido (transferencia)
+// Extiende desde el vencimiento actual si aun no vence, o desde hoy si ya vencio. Reactiva si estaba vencida.
+export const registrarPago = async (req, res) => {
+  try {
+    const empresa = await Empresa.findByPk(req.params.id);
+    if (!empresa) return res.status(404).json({ error: 'Empresa no encontrada' });
+    const meses = req.body?.meses !== undefined
+      ? Number(req.body.meses)
+      : (empresa.periodo_pago === 'anual' ? 12 : 1);
+    if (!Number.isInteger(meses) || meses < 1 || meses > 24) return res.status(400).json({ error: 'Meses invalidos (1 a 24)' });
+
+    const hoy = fechaLocalISO();
+    const base = empresa.fecha_vencimiento && empresa.fecha_vencimiento > hoy ? empresa.fecha_vencimiento : hoy;
+    const anterior = { fecha_vencimiento: empresa.fecha_vencimiento, estado: empresa.estado };
+    const update = { fecha_vencimiento: sumarAFecha(base, { meses }), aviso_vencimiento_enviado: null };
+    if (['vencida', 'prueba'].includes(empresa.estado)) update.estado = 'activa';
+    await empresa.update(update);
+    await auditarSuperadmin(req, 'SUPERADMIN_EMPRESA_PAGO', empresa, { meses, anterior, nuevo: update });
+    res.json({ mensaje: `Pago registrado: vence el ${update.fecha_vencimiento}`, fecha_vencimiento: update.fecha_vencimiento });
+  } catch (e) {
+    res.status(500).json({ error: 'Error al registrar el pago', detalle: e.message });
   }
 };
 

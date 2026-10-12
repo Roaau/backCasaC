@@ -33,11 +33,26 @@ function usageKey(req) {
   return `${todayKey()}:${req.usuario?.empresa_id || "sin-empresa"}`;
 }
 
-function checkLimit(req) {
+// Limite por empresa segun su plan (empresas.ia_limite_diario); sin valor usa IA_DAILY_LIMIT.
+// Se guarda unos minutos para no consultar la base en cada pregunta.
+const limitesEmpresa = new Map();
+async function limiteDiario(req) {
+  const empresaId = req.usuario?.empresa_id;
+  if (!empresaId) return DAILY_LIMIT;
+  const guardado = limitesEmpresa.get(empresaId);
+  if (guardado && Date.now() - guardado.en < 5 * 60 * 1000) return guardado.limite;
+  const empresa = await Empresa.findByPk(empresaId, { attributes: ["ia_limite_diario"] });
+  const limite = Number.isInteger(empresa?.ia_limite_diario) ? empresa.ia_limite_diario : DAILY_LIMIT;
+  limitesEmpresa.set(empresaId, { limite, en: Date.now() });
+  return limite;
+}
+
+async function checkLimit(req) {
+  const limite = await limiteDiario(req);
   const key = usageKey(req);
   const current = usage.get(key) || 0;
-  if (current >= DAILY_LIMIT) {
-    const err = new Error(`Limite diario de IA alcanzado (${DAILY_LIMIT}). Intenta manana o aumenta IA_DAILY_LIMIT.`);
+  if (current >= limite) {
+    const err = new Error(`Ya usaste las ${limite} consultas de IA de hoy que incluye tu plan. Mañana se reinician.`);
     err.status = 429;
     throw err;
   }
@@ -290,7 +305,7 @@ async function responderIA(req, res, tipo, payloadBuilder, maxTokens = 900) {
     const cached = cacheGet(cacheKey);
     if (cached) return res.json({ texto: cached, cache: true, limite_diario: DAILY_LIMIT });
 
-    checkLimit(req);
+    await checkLimit(req);
     const payload = await payloadBuilder(scope, fechaInicio, fechaFin);
     const empresa = await Empresa.findByPk(scope.empresa_id, { attributes: ["giro"] });
     const { system, prompt } = buildPrompt(tipo, payload, empresa?.giro);
@@ -325,7 +340,7 @@ export const getStatus = (req, res) => {
 
 export const consultar = async (req, res) => {
   try {
-    checkLimit(req);
+    await checkLimit(req);
     const system = String(req.body.system || "Eres un asistente de negocio para un comercio con punto de venta. Responde en espanol y se breve.");
     const prompt = String(req.body.prompt || "").slice(0, 8000);
     if (!prompt.trim()) return res.status(400).json({ error: "prompt requerido" });

@@ -329,3 +329,33 @@ export const enviarFacturaPorCorreo = async ({
 </body></html>`,
   });
 };
+
+// ── Recordatorio al cliente: su plan esta por vencer ─────────────────────────
+export const notificarVencimientoProximo = async ({ destinatario, razon_social, dias, fecha, precio_mensual, periodo_pago }) => {
+  if (!process.env.BREVO_API_KEY) return;
+  const cuando = dias <= 1 ? "mañana" : `en ${dias} días`;
+  const monto = Number(precio_mensual || 0) * (periodo_pago === "anual" ? 10 : 1);
+  await enviarBrevo({
+    to: destinatario,
+    subject: `Tu plan de SC POS vence ${cuando}`,
+    html: `<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8"></head>
+<body style="margin:0;padding:0;background:#fafaf7;font-family:Arial,sans-serif;color:#1c1c1a;">
+<div style="padding:32px 16px;">
+  <div style="max-width:480px;margin:0 auto;background:#fff;border:1px solid #e6e4de;border-radius:12px;padding:32px;">
+    <p style="margin:0 0 4px;font-size:13px;color:#6b6b66;">SC POS</p>
+    <h1 style="margin:0 0 16px;font-size:20px;font-weight:600;">Tu plan vence ${cuando}</h1>
+    <p style="margin:0 0 12px;font-size:15px;line-height:1.5;">
+      Hola, el plan de <strong>${razon_social}</strong> vence el <strong>${fecha}</strong>.
+      Para que tu punto de venta siga funcionando, realiza tu pago antes de esa fecha.
+    </p>
+    <p style="margin:0 0 12px;font-size:15px;line-height:1.5;">
+      Monto: <strong>$${monto.toLocaleString("es-MX")} MXN</strong> (${periodo_pago === "anual" ? "pago anual" : "pago mensual"}).
+    </p>
+    <p style="margin:0;font-size:13px;color:#6b6b66;line-height:1.5;">
+      Si ya pagaste, ignora este mensaje. ¿Dudas? Responde a este correo.
+    </p>
+  </div>
+</div>
+</body></html>`,
+  });
+};

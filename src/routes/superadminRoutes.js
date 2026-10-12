@@ -8,6 +8,7 @@ import {
   reactivarEmpresa,
   actualizarNotas,
   actualizarComercial,
+  registrarPago,
   toggleSucursal,
   toggleUsuario,
   listarCatalogos,
@@ -26,6 +27,7 @@ router.put('/empresas/:id/suspender', suspenderEmpresa);
 router.put('/empresas/:id/reactivar', reactivarEmpresa);
 router.put('/empresas/:id/notas',    actualizarNotas);
 router.put('/empresas/:id/comercial', actualizarComercial);
+router.post('/empresas/:id/pago',    registrarPago);
 router.put('/sucursales/:id/toggle', toggleSucursal);
 router.put('/usuarios/:id/toggle',   toggleUsuario);
 router.get('/auditoria',             listarAuditoriaSuperadmin);

@@ -34,6 +34,7 @@ import ventasRoutes from "./routes/ventasRoutes.js";
 import reportesRoutes from "./routes/reportesRoutes.js";
 import inventarioRoutes from "./routes/inventarioRoutes.js";
 import escanerRoutes from "./routes/escanerRoutes.js";
+import planesRoutes from "./routes/planesRoutes.js";
 import satRoutes from "./routes/satRoutes.js";
 import clientesFiscalesRoutes from "./routes/clientesFiscalesRoutes.js";
 import cfdiRoutes from "./routes/cfdiRoutes.js";
@@ -86,6 +87,9 @@ import "./models/DetalleCotizacion.js";
 import "./models/Auditoria.js";
 import "./models/Notificacion.js";
 import Empresa from "./models/EmpresaModel.js";
+import { notificarVencimientoProximo } from "./services/emailService.js";
+import { sumarAFecha } from "./utils/planes.js";
+import { fechaLocalISO } from "./utils/fechas.js";
 import Sucursal from "./models/SucursalModel.js";
 import Producto from "./models/Producto.js";
 import StockSucursal from "./models/StockSucursalModel.js";
@@ -224,6 +228,34 @@ io.on("connection", (socket) => {
   socket.on("disconnect", () => {});
 });
 
+// Cron diario (9:00 hora de Mexico): avisa por correo a las empresas cuyo plan vence en 7 dias o mañana.
+// aviso_vencimiento_enviado evita mandar dos veces el mismo dia.
+cron.schedule('0 9 * * *', async () => {
+  try {
+    const hoy = fechaLocalISO();
+    const en7 = sumarAFecha(hoy, { dias: 7 });
+    const en1 = sumarAFecha(hoy, { dias: 1 });
+    const porVencer = await Empresa.findAll({
+      where: { estado: 'activa', fecha_vencimiento: [en7, en1] },
+      attributes: ['empresa_id', 'razon_social', 'email_contacto', 'fecha_vencimiento', 'precio_mensual', 'periodo_pago', 'aviso_vencimiento_enviado']
+    });
+    for (const emp of porVencer) {
+      if (!emp.email_contacto || emp.aviso_vencimiento_enviado === hoy) continue;
+      await notificarVencimientoProximo({
+        destinatario: emp.email_contacto,
+        razon_social: emp.razon_social,
+        dias: emp.fecha_vencimiento === en1 ? 1 : 7,
+        fecha: emp.fecha_vencimiento,
+        precio_mensual: emp.precio_mensual,
+        periodo_pago: emp.periodo_pago
+      }).catch(err => console.error('[Recordatorio] No se envio a', emp.email_contacto, err.message));
+      await emp.update({ aviso_vencimiento_enviado: hoy });
+    }
+  } catch (err) {
+    console.error('[Recordatorio] Error:', err.message);
+  }
+}, { timezone: 'America/Mexico_City' });
+
 // Cron: verificar stock bajo cada 30 min y notificar via socket
 cron.schedule('*/30 * * * *', async () => {
   try {
@@ -281,6 +313,7 @@ app.use("/api/auth/solicitar-registro", otpLimit);
 app.use("/api/auth/solicitar-reset",    otpLimit);
 app.use("/api/auth", authRoutes);
 app.use("/api/escaner", escanerLimit, escanerRoutes);
+app.use("/api/planes", planesRoutes);
 
 app.use("/api/productos", verificarToken, productosRoutes);
 app.use("/api/usuarios", verificarToken, usuariosRoutes);

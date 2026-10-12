@@ -12,6 +12,7 @@ import crypto from "crypto";
 import { enviarCodigoRegistro, enviarCodigoReset, notificarNuevaEmpresa, notificarEmpresaRegistrada } from "../services/emailService.js";
 import { validarLimiteUsuarios } from "../utils/planLimits.js";
 import { normalizarGiro } from "../utils/giros.js";
+import { cotizar } from "../utils/planes.js";
 
 const generarCodigo = () =>
   'INV-' + crypto.randomBytes(3).toString('hex').toUpperCase();
@@ -159,6 +160,18 @@ export const solicitarCodigoRegistro = async (req, res) => {
   }
 };
 
+// Codigo corto para "recomienda y gana un mes" (sin 0/O/1/I para que no se confundan)
+async function generarCodigoReferido(transaction) {
+  const letras = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  for (let intento = 0; intento < 5; intento++) {
+    const bytes = crypto.randomBytes(6);
+    const codigo = Array.from(bytes, b => letras[b % letras.length]).join('');
+    const existe = await Empresa.findOne({ where: { codigo_referido: codigo }, attributes: ['empresa_id'], transaction });
+    if (!existe) return codigo;
+  }
+  return null;
+}
+
 // ── POST /api/auth/registro ──────────────────────────────────────────────────
 //  Escenario A — Crear empresa (ADMIN):
 //    body: { nombre, usuario, contrasena, rfc, razon_social, regimen_fiscal }
@@ -171,7 +184,7 @@ export const registro = async (req, res) => {
     nombre, usuario, contrasena, codigo_invitacion,
     rfc, razon_social, regimen_fiscal,
     email, codigo_verificacion,
-    plan, precio_mensual, limite_sucursales, limite_usuarios, giro
+    plan, giro, sucursales, usuarios_extra, segunda_sucursal, periodo, codigo_referido
   } = req.body;
 
   if (!nombre || !usuario || !contrasena) {
@@ -254,30 +267,23 @@ export const registro = async (req, res) => {
       // Marca el código como usado dentro de la transacción
       await SolicitudRegistro.update({ usado: true }, { where: { id: solicitud.id }, transaction: t });
 
-      const planesValidos = ['basico', 'pro', 'multisucursal'];
-      const planNormalizado = planesValidos.includes(String(plan || '').toLowerCase().trim())
-        ? String(plan).toLowerCase().trim()
-        : 'basico';
+      // Precio y limites salen de la lista de precios (utils/planes.js), nunca del navegador
+      const cotizacion = cotizar({
+        plan, giro, sucursales, usuarios_extra,
+        segunda_sucursal: segunda_sucursal === true || segunda_sucursal === 'true',
+        periodo
+      });
       const estadoInicial = 'pendiente';
-      const limiteSucursalesSolicitado = Math.max(1, Number(limite_sucursales) || 1);
-      const limiteUsuariosSolicitado = Math.max(1, Number(limite_usuarios) || 5);
-      const precioSolicitado = Math.max(0, Number(precio_mensual) || 0);
-      let limiteSucursales = 1;
-      let limiteUsuarios = 5;
-      let precioMensual = 700;
 
-      if (planNormalizado === 'pro') {
-        limiteSucursales = Math.min(limiteSucursalesSolicitado, 2);
-        limiteUsuarios = Math.min(limiteUsuariosSolicitado, 10);
-        precioMensual = Math.max(precioSolicitado, 1400);
-      } else if (planNormalizado === 'multisucursal') {
-        limiteSucursales = Math.max(3, limiteSucursalesSolicitado);
-        limiteUsuarios = Math.max(limiteSucursales * 5, limiteUsuariosSolicitado);
-        precioMensual = Math.max(precioSolicitado, limiteSucursales * 750);
-      } else {
-        limiteSucursales = 1;
-        limiteUsuarios = 5;
-        precioMensual = Math.max(precioSolicitado, 700);
+      // Codigo de quien lo recomendo (opcional). Uno invalido no bloquea el registro.
+      let referidoPor = null;
+      if (codigo_referido && String(codigo_referido).trim()) {
+        const quienRecomienda = await Empresa.findOne({
+          where: { codigo_referido: String(codigo_referido).trim().toUpperCase() },
+          attributes: ['empresa_id'],
+          transaction: t
+        });
+        referidoPor = quienRecomienda?.empresa_id ?? null;
       }
 
       const empresa = await Empresa.create(
@@ -287,12 +293,18 @@ export const registro = async (req, res) => {
           regimen_fiscal: regimen_fiscal || null,
           activo:         true,
           estado:         estadoInicial,
-          plan:           planNormalizado,
-          precio_mensual: precioMensual,
-          limite_sucursales: limiteSucursales,
-          limite_usuarios: limiteUsuarios,
+          plan:           cotizacion.plan,
+          precio_mensual: cotizacion.precio_mensual,
+          limite_sucursales: cotizacion.limite_sucursales,
+          limite_usuarios: cotizacion.limite_usuarios,
           email_contacto: email.toLowerCase().trim(),
-          giro:           normalizarGiro(giro)
+          giro:           cotizacion.giro,
+          giro_registro:  cotizacion.giro,
+          nivel:          cotizacion.nivel,
+          periodo_pago:   cotizacion.periodo,
+          ia_limite_diario: cotizacion.ia_limite_diario,
+          codigo_referido: await generarCodigoReferido(t),
+          referido_por:   referidoPor
         },
         { transaction: t }
       );

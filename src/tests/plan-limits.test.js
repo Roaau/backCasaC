@@ -39,7 +39,7 @@ describe('Limites comerciales por plan', () => {
 
     await expect(validarLimiteUsuarios(10, 1)).rejects.toMatchObject({
       status: 403,
-      message: 'Tu plan llego al limite de usuarios activos.'
+      message: expect.stringContaining('límite de usuarios activos')
     });
   });
 });

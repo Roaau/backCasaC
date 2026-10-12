@@ -1,6 +1,7 @@
 import Empresa from "../models/EmpresaModel.js";
 import Sucursal from "../models/SucursalModel.js";
 import Usuario from "../models/Usuario.js";
+import { EXTRAS } from "./planes.js";
 
 const normalizarLimite = (valor) => {
   const limite = Number(valor);
@@ -50,7 +51,7 @@ export const validarLimiteUsuarios = async (empresa_id, incremento = 1, options 
   });
 
   if (actuales + incremento > limite) {
-    throw errorLimite("Tu plan llego al limite de usuarios activos.", {
+    throw errorLimite(`Tu plan llegó al límite de usuarios activos. Puedes agregar usuarios extra por $${EXTRAS.usuario} al mes cada uno: pídelo a soporte.`, {
       plan: empresa.plan,
       limite,
       actuales

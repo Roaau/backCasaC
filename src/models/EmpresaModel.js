@@ -18,6 +18,15 @@ const Empresa = sequelize.define('Empresa', {
   // IVA de la empresa: apagado = los precios ya lo incluyen (lo normal en mostrador)
   iva_activo:      { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
   iva_porcentaje:  { type: DataTypes.DECIMAL(5, 2), allowNull: false, defaultValue: 16 },
+  // Planes por giro (utils/planes.js)
+  nivel:           { type: DataTypes.STRING(30), allowNull: true },
+  periodo_pago:    { type: DataTypes.STRING(10), allowNull: false, defaultValue: 'mensual' },
+  giro_registro:   { type: DataTypes.STRING(40), allowNull: true },
+  codigo_referido: { type: DataTypes.STRING(12), allowNull: true, unique: true },
+  referido_por:    { type: DataTypes.INTEGER, allowNull: true },
+  bono_referido_aplicado: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
+  ia_limite_diario: { type: DataTypes.INTEGER, allowNull: true },
+  aviso_vencimiento_enviado: { type: DataTypes.DATEONLY, allowNull: true },
   email_contacto: { type: DataTypes.STRING(255), allowNull: true, unique: true },
   notas_admin:     { type: DataTypes.TEXT, allowNull: true },
   creado_en:       { type: DataTypes.DATE, allowNull: true, defaultValue: DataTypes.NOW }
