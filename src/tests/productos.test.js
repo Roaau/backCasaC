@@ -40,7 +40,7 @@ const { default: Producto } = require('../models/Producto.js');
 const { default: StockSucursal } = require('../models/StockSucursalModel.js');
 const { default: MovimientoInventario } = require('../models/MovimientoInventario.js');
 const { default: Sucursal } = require('../models/SucursalModel.js');
-const { getAll, createProducto } = require('../controllers/productosController.js');
+const { getAll, createProducto, stockPorSucursal } = require('../controllers/productosController.js');
 
 const makeRow = (data) => ({ toJSON: () => data, ...data, StockSucursals: [] });
 
@@ -196,5 +196,36 @@ describe('Productos - createProducto()', () => {
       stock_anterior: 5,
       stock_nuevo: 12
     }));
+  });
+});
+
+describe('Productos — stockPorSucursal()', () => {
+  beforeEach(() => jest.clearAllMocks());
+
+  test('devuelve la existencia en cada sucursal activa de la empresa', async () => {
+    Producto.findOne.mockResolvedValue({ producto_id: 9, nombre: 'Arroz', unidad_venta: 'pieza' });
+    Sucursal.findAll.mockResolvedValue([{ sucursal_id: 1, nombre: 'Centro' }, { sucursal_id: 2, nombre: 'Norte' }]);
+    StockSucursal.findAll.mockResolvedValue([{ sucursal_id: 1, stock_actual: '12', stock_minimo: '3' }]);
+    const res = mockRes();
+
+    await stockPorSucursal({ params: { id: '9' }, usuario: { empresa_id: 4, rol: 1 } }, res);
+
+    expect(Producto.findOne).toHaveBeenCalledWith(expect.objectContaining({ where: { producto_id: 9, empresa_id: 4 } }));
+    expect(Sucursal.findAll).toHaveBeenCalledWith(expect.objectContaining({ where: { empresa_id: 4, activa: true } }));
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
+      total: 12,
+      sucursales: [
+        { sucursal_id: 1, nombre: 'Centro', stock_actual: 12, stock_minimo: 3 },
+        { sucursal_id: 2, nombre: 'Norte', stock_actual: 0, stock_minimo: 0 }
+      ]
+    }));
+  });
+
+  test('producto de otra empresa responde 404', async () => {
+    Producto.findOne.mockResolvedValue(null);
+    const res = mockRes();
+    await stockPorSucursal({ params: { id: '9' }, usuario: { empresa_id: 4, rol: 1 } }, res);
+    expect(res.status).toHaveBeenCalledWith(404);
+    expect(Sucursal.findAll).not.toHaveBeenCalled();
   });
 });

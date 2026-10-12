@@ -1,7 +1,8 @@
 ﻿import { Op, QueryTypes } from 'sequelize';
 import sequelize from '../config/database.js';
 import Notificacion from '../models/Notificacion.js';
-import { resolverScopeSucursales, responderErrorScope } from '../utils/scope.js';
+import Sucursal from '../models/SucursalModel.js';
+import { esAdminEmpresa, resolverScopeSucursales, responderErrorScope } from '../utils/scope.js';
 import { registrarAuditoria } from '../utils/auditoria.js';
 import { fechaLocalISO } from '../utils/fechas.js';
 
@@ -38,10 +39,31 @@ async function upsertNotificacion(data) {
   return Notificacion.create(data);
 }
 
+// El admin recibe los avisos de stock bajo de todas sus sucursales, aunque tenga seleccionada solo una.
+// Los empleados (y el admin en 'todas') se quedan con su alcance normal.
+export async function scopeConStockDeTodas(req, scope) {
+  if (scope.todas || !esAdminEmpresa(req.usuario)) return scope;
+  const sucursales = await Sucursal.findAll({ where: { empresa_id: scope.empresa_id, activa: true }, attributes: ['sucursal_id'] });
+  return { ...scope, sucursalesStock: sucursales.map(s => s.sucursal_id) };
+}
+
+// Filtro de notificaciones visibles para el alcance
+export function whereVisibles(scope) {
+  const base = scope.todas ? { [Op.in]: scope.sucursalIds } : scope.sucursal_id;
+  if (!scope.sucursalesStock?.length) return { sucursal_id: base };
+  return {
+    [Op.or]: [
+      { sucursal_id: base },
+      { tipo: 'stock_bajo', sucursal_id: { [Op.in]: scope.sucursalesStock } }
+    ]
+  };
+}
+
 export async function generarNotificacionesEmpresa(req, scope) {
   const empresaId = scope.empresa_id;
   const sucursalIds = scope.sucursalIds?.length ? scope.sucursalIds : [scope.sucursal_id].filter(Boolean);
   if (!empresaId || sucursalIds.length === 0) return;
+  const stockIds = scope.sucursalesStock?.length ? scope.sucursalesStock : sucursalIds;
 
   const stockRows = await sequelize.query(`
     SELECT p.producto_id, p.nombre, COALESCE(ss.stock_actual, p.stock_actual, 0) AS stock_actual,
@@ -56,7 +78,7 @@ export async function generarNotificacionesEmpresa(req, scope) {
       AND COALESCE(ss.stock_actual, p.stock_actual, 0) <= COALESCE(NULLIF(ss.stock_minimo, 0), NULLIF(p.stock_minimo, 0), 5)
     ORDER BY COALESCE(ss.stock_actual, p.stock_actual, 0) ASC
     LIMIT 40
-  `, { replacements: { empresa_id: empresaId, sucursalIds }, type: QueryTypes.SELECT });
+  `, { replacements: { empresa_id: empresaId, sucursalIds: stockIds }, type: QueryTypes.SELECT });
 
   for (const p of stockRows) {
     const severidad = severidadStock(p.stock_actual, p.stock_minimo);
@@ -162,13 +184,13 @@ export async function generarNotificacionesEmpresa(req, scope) {
 
 export const listarNotificaciones = async (req, res) => {
   try {
-    const scope = await resolverScopeSucursales(req);
+    const scope = await scopeConStockDeTodas(req, await resolverScopeSucursales(req));
     await generarNotificacionesEmpresa(req, scope);
     const estados = String(req.query.estado || 'nueva,vista').split(',').map(e => e.trim()).filter(Boolean);
     const rows = await Notificacion.findAll({
       where: {
         empresa_id: scope.empresa_id,
-        sucursal_id: scope.todas ? { [Op.in]: scope.sucursalIds } : scope.sucursal_id,
+        ...whereVisibles(scope),
         estado: { [Op.in]: estados }
       },
       order: [
@@ -185,12 +207,12 @@ export const listarNotificaciones = async (req, res) => {
 
 export const resumenNotificaciones = async (req, res) => {
   try {
-    const scope = await resolverScopeSucursales(req);
+    const scope = await scopeConStockDeTodas(req, await resolverScopeSucursales(req));
     await generarNotificacionesEmpresa(req, scope);
     const rows = await Notificacion.findAll({
       where: {
         empresa_id: scope.empresa_id,
-        sucursal_id: scope.todas ? { [Op.in]: scope.sucursalIds } : scope.sucursal_id,
+        ...whereVisibles(scope),
         estado: { [Op.in]: ['nueva', 'vista'] }
       },
       order: [['creada_en', 'DESC']],
@@ -218,12 +240,12 @@ export const cambiarEstadoNotificacion = async (req, res) => {
     if (!id || !['vista', 'resuelta', 'ignorada', 'nueva'].includes(estado)) {
       return res.status(400).json({ error: 'Estado no valido' });
     }
-    const scope = await resolverScopeSucursales(req);
+    const scope = await scopeConStockDeTodas(req, await resolverScopeSucursales(req));
     const notificacion = await Notificacion.findOne({
       where: {
         notificacion_id: id,
         empresa_id: scope.empresa_id,
-        sucursal_id: scope.todas ? { [Op.in]: scope.sucursalIds } : scope.sucursal_id
+        ...whereVisibles(scope)
       }
     });
     if (!notificacion) return res.status(404).json({ error: 'Notificacion no encontrada' });

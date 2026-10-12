@@ -13,6 +13,45 @@ import {
 import { UNIDADES_VENTA } from "../utils/giros.js";
 import { leerFilasInventario, COLUMNAS_PLANTILLA } from "../utils/importarExcel.js";
 import sequelize from "../config/database.js";
+import { obtenerEmpresaId, parseIdPositivo } from "../utils/scope.js";
+
+// GET /api/productos/:id/stock-sucursales (solo admin; ruta con verificarAdmin)
+// Existencia del producto en cada sucursal activa de la empresa. Sin registro de stock = 0.
+export const stockPorSucursal = async (req, res) => {
+  try {
+    const empresa_id = obtenerEmpresaId(req.usuario);
+    const producto_id = parseIdPositivo(req.params.id);
+    if (!producto_id) return res.status(400).json({ error: 'Producto inválido' });
+
+    const producto = await Producto.findOne({
+      where: { producto_id, empresa_id },
+      attributes: ['producto_id', 'nombre', 'unidad_venta']
+    });
+    if (!producto) return res.status(404).json({ error: 'Producto no encontrado' });
+
+    const [sucursales, stocks] = await Promise.all([
+      Sucursal.findAll({ where: { empresa_id, activa: true }, attributes: ['sucursal_id', 'nombre'], order: [['nombre', 'ASC']] }),
+      StockSucursal.findAll({ where: { producto_id }, attributes: ['sucursal_id', 'stock_actual', 'stock_minimo'] })
+    ]);
+    const porSucursal = new Map(stocks.map(s => [s.sucursal_id, s]));
+    const detalle = sucursales.map(s => ({
+      sucursal_id:  s.sucursal_id,
+      nombre:       s.nombre,
+      stock_actual: Number(porSucursal.get(s.sucursal_id)?.stock_actual ?? 0),
+      stock_minimo: Number(porSucursal.get(s.sucursal_id)?.stock_minimo ?? 0)
+    }));
+
+    res.json({
+      producto_id: producto.producto_id,
+      nombre: producto.nombre,
+      unidad_venta: producto.unidad_venta,
+      total: detalle.reduce((acc, d) => acc + d.stock_actual, 0),
+      sucursales: detalle
+    });
+  } catch (e) {
+    responderErrorScope(res, e);
+  }
+};
 
 export const uploadMiddleware = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } }).single('archivo');
 
