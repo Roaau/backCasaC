@@ -83,7 +83,7 @@ export const login = async (req, res) => {
     );
 
     const empresaInfo = user.empresa_id
-      ? await Empresa.findByPk(user.empresa_id, { attributes: ['logo_empresa', 'razon_social', 'giro'] })
+      ? await Empresa.findByPk(user.empresa_id, { attributes: ['logo_empresa', 'razon_social', 'giro', 'iva_activo', 'iva_porcentaje'] })
       : null;
 
     return res.json({
@@ -103,6 +103,8 @@ export const login = async (req, res) => {
       empresa_logo:      empresaInfo?.logo_empresa ?? null,
       empresa_nombre:    empresaInfo?.razon_social ?? null,
       empresa_giro:      empresaInfo?.giro ?? 'general',
+      empresa_iva_activo:     empresaInfo?.iva_activo === true,
+      empresa_iva_porcentaje: Number(empresaInfo?.iva_porcentaje ?? 16),
       es_superadmin:     user.es_superadmin === true
     });
   } catch (error) {

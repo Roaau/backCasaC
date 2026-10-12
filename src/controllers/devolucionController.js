@@ -171,7 +171,9 @@ export const crear = async (req, res) => {
       : await Caja.findOne({ where: { sucursal_id, fecha_cierre: null }, transaction: t });
     if (cajaAbierta) await validarSucursalEmpresa(req.usuario, cajaAbierta.sucursal_id);
 
-    if (cajaAbierta) {
+    // Una venta cobrada con terminal se reembolsa por la terminal: no sale efectivo de la caja
+    const cobradaEnEfectivo = (venta.tipo_pago || 'efectivo') === 'efectivo';
+    if (cajaAbierta && cobradaEnEfectivo) {
       await MovimientoCaja.create({
         caja_id: cajaAbierta.caja_id,
         usuario_id,

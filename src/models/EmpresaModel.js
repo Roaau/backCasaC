@@ -15,6 +15,9 @@ const Empresa = sequelize.define('Empresa', {
   limite_sucursales: { type: DataTypes.INTEGER, allowNull: false, defaultValue: 1 },
   limite_usuarios:   { type: DataTypes.INTEGER, allowNull: false, defaultValue: 5 },
   giro:            { type: DataTypes.STRING(40), allowNull: false, defaultValue: 'general' },
+  // IVA de la empresa: apagado = los precios ya lo incluyen (lo normal en mostrador)
+  iva_activo:      { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
+  iva_porcentaje:  { type: DataTypes.DECIMAL(5, 2), allowNull: false, defaultValue: 16 },
   email_contacto: { type: DataTypes.STRING(255), allowNull: true, unique: true },
   notas_admin:     { type: DataTypes.TEXT, allowNull: true },
   creado_en:       { type: DataTypes.DATE, allowNull: true, defaultValue: DataTypes.NOW }

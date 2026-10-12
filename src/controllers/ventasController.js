@@ -3,10 +3,14 @@ import DetalleVenta from "../models/DetalleVenta.js";
 import Producto from "../models/Producto.js";
 import StockSucursal from "../models/StockSucursalModel.js";
 import Sucursal from "../models/SucursalModel.js";
+import Empresa from "../models/EmpresaModel.js";
 import sequelize from "../config/database.js";
 import { QueryTypes } from "sequelize";
 import Caja from "../models/CajaModel.js";
 import MovimientoInventario from "../models/MovimientoInventario.js";
+import MovimientoCaja from "../models/MovimientoCaja.js";
+import Devolucion from "../models/Devolucion.js";
+import DetalleDevolucion from "../models/DetalleDevolucion.js";
 import CfdiVenta from "../models/CfdiVenta.js";
 import ClienteFiscal from "../models/ClienteFiscal.js";
 import { esAdminEmpresa, resolverSucursalOperativa, responderErrorScope } from "../utils/scope.js";
@@ -151,9 +155,17 @@ export const crearVenta = async (req, res) => {
       }, { transaction: t });
     }
 
+    // El IVA sale de la configuracion de la empresa, no de lo que mande el navegador
+    const empresaIva = await Empresa.findByPk(req.usuario.empresa_id, { attributes: ['iva_activo', 'iva_porcentaje'], transaction: t });
+    const ivaEmpresa = empresaIva?.iva_activo ? Number(empresaIva.iva_porcentaje) || 0 : 0;
+    if (iva_porcentaje !== undefined && iva_porcentaje !== null && Number(iva_porcentaje) !== ivaEmpresa) {
+      const error = new Error('La configuración de IVA del negocio cambió. Recarga la página e intenta de nuevo.');
+      error.status = 409;
+      throw error;
+    }
     const totalServidor = calcularTotalVenta({
       subtotal: subtotalServidor,
-      ivaPorcentaje: iva_porcentaje,
+      ivaPorcentaje: ivaEmpresa,
       descuentoPorcentaje: descuento_porcentaje,
       totalEnviado: total
     });
@@ -295,6 +307,112 @@ export const listarPedidos = async (req, res) => {
   }
 };
 
+const redondear2 = (n) => Math.round(n * 100) / 100;
+
+// Cancelar un pedido equivale a devolverlo completo: regresa a inventario lo que no se haya devuelto antes
+// y, si se cobro en efectivo, registra la salida del dinero en la caja abierta de esa sucursal.
+// Se guarda como devolucion para que caja y reportes lo descuenten igual que cualquier devolucion.
+export async function revertirPedidoCancelado(req, pedido, transaction) {
+  const vendidos = await DetalleVenta.findAll({ where: { venta_id: pedido.venta_id }, transaction });
+  const previas = await Devolucion.findAll({ where: { venta_id: pedido.venta_id }, attributes: ['devolucion_id'], transaction });
+  const devuelto = new Map();
+  if (previas.length) {
+    const detallesPrevios = await DetalleDevolucion.findAll({
+      where: { devolucion_id: previas.map(d => d.devolucion_id) },
+      transaction
+    });
+    for (const d of detallesPrevios) {
+      devuelto.set(d.producto_id, (devuelto.get(d.producto_id) || 0) + Number(d.cantidad));
+    }
+  }
+
+  // Mismo prorrateo que devoluciones: aplica el IVA/descuento que tuvo la venta
+  const base = vendidos.reduce((s, v) => s + Number(v.precio_unitario) * Number(v.cantidad), 0);
+  const ratio = base > 0 ? Number(pedido.total) / base : 1;
+  const lineas = vendidos
+    .map(v => {
+      const cantidad = Math.round((Number(v.cantidad) - (devuelto.get(v.producto_id) || 0)) * 1000) / 1000;
+      return { v, cantidad, subtotal: redondear2(Number(v.precio_unitario) * cantidad * ratio) };
+    })
+    .filter(l => l.cantidad > 0);
+
+  const totalDevuelto = redondear2(lineas.reduce((s, l) => s + l.subtotal, 0));
+  if (!lineas.length) return { productos: 0, totalDevuelto: 0, efectivo: false };
+
+  const efectivo = (pedido.tipo_pago || 'efectivo') === 'efectivo';
+  let caja = null;
+  if (efectivo && totalDevuelto > 0) {
+    caja = await Caja.findOne({ where: { sucursal_id: pedido.sucursal_id, fecha_cierre: null }, transaction });
+    if (!caja) {
+      const error = new Error('Abre la caja de la sucursal del pedido para registrar la devolución del dinero.');
+      error.status = 409;
+      throw error;
+    }
+  }
+
+  const usuario_id = req.usuario.id;
+  const dev = await Devolucion.create({
+    venta_id: pedido.venta_id,
+    folio_venta: pedido.folio,
+    motivo: 'Pedido cancelado',
+    usuario_id,
+    sucursal_id: pedido.sucursal_id,
+    total_devuelto: totalDevuelto
+  }, { transaction });
+
+  for (const { v, cantidad, subtotal } of lineas) {
+    await DetalleDevolucion.create({
+      devolucion_id: dev.devolucion_id,
+      producto_id: v.producto_id,
+      nombre_producto: v.nombre_producto,
+      cantidad,
+      precio_unitario: v.precio_unitario,
+      subtotal
+    }, { transaction });
+
+    let stock = await StockSucursal.findOne({
+      where: { producto_id: v.producto_id, sucursal_id: pedido.sucursal_id },
+      transaction,
+      lock: true
+    });
+    const anterior = stock ? Number(stock.stock_actual) || 0 : 0;
+    if (stock) {
+      await stock.increment('stock_actual', { by: cantidad, transaction });
+    } else {
+      stock = await StockSucursal.create({ producto_id: v.producto_id, sucursal_id: pedido.sucursal_id, stock_actual: cantidad, stock_minimo: 0 }, { transaction });
+    }
+    // La venta descuenta tambien el total del producto; se regresa igual
+    await Producto.increment('stock_actual', { by: cantidad, where: { producto_id: v.producto_id }, transaction });
+    await MovimientoInventario.create({
+      producto_id: v.producto_id,
+      nombre_producto: v.nombre_producto,
+      codigo_barras: v.codigo_barras || null,
+      usuario_id,
+      sucursal_id: pedido.sucursal_id,
+      tipo_movimiento: 'ENTRADA',
+      motivo: 'CANCELACION',
+      cantidad,
+      stock_anterior: anterior,
+      stock_nuevo: anterior + cantidad,
+      observaciones: `Pedido cancelado ${pedido.folio}`,
+      fecha: new Date()
+    }, { transaction });
+  }
+
+  if (caja) {
+    await MovimientoCaja.create({
+      caja_id: caja.caja_id,
+      usuario_id,
+      tipo_movimiento: 'DEVOLUCION',
+      monto: totalDevuelto,
+      concepto: `Pedido cancelado ${pedido.folio}`,
+      fecha: new Date()
+    }, { transaction });
+  }
+
+  return { productos: lineas.length, totalDevuelto, efectivo: !!caja };
+}
+
 export const actualizarEstadoPedido = async (req, res) => {
   const ventaId = Number(req.params.id);
   const estado = String(req.body.estado || '').toUpperCase();
@@ -306,7 +424,7 @@ export const actualizarEstadoPedido = async (req, res) => {
   try {
     const filtroEmpleado = esAdminEmpresa(req.usuario) ? "" : "AND v.sucursal_id = :sucursal_id";
     const [pedido] = await sequelize.query(
-      `SELECT v.venta_id, v.folio, v.sucursal_id, v.estado_pedido, s.empresa_id
+      `SELECT v.venta_id, v.folio, v.sucursal_id, v.estado_pedido, v.total, v.tipo_pago, s.empresa_id
        FROM ventas v
        JOIN sucursales s ON v.sucursal_id = s.sucursal_id
        WHERE v.venta_id = :ventaId
@@ -321,18 +439,43 @@ export const actualizarEstadoPedido = async (req, res) => {
       return res.status(404).json({ error: 'Pedido no encontrado' });
     }
 
+    const estadoActual = pedido.estado_pedido || 'PENDIENTE';
+    if (estadoActual === 'CANCELADO' && estado !== 'CANCELADO') {
+      const error = new Error('El pedido ya está cancelado y su mercancía regresó al inventario; no se puede reactivar.');
+      error.status = 409;
+      throw error;
+    }
+    if (estadoActual === 'CANCELADO') {
+      await t.rollback();
+      return res.json({ mensaje: 'El pedido ya estaba cancelado', estado });
+    }
+    if (estado === 'CANCELADO' && estadoActual === 'ENTREGADO') {
+      const error = new Error('El pedido ya se entregó. Para regresarlo registra una devolución.');
+      error.status = 409;
+      throw error;
+    }
+
+    let reverso = null;
+    if (estado === 'CANCELADO') reverso = await revertirPedidoCancelado(req, pedido, t);
+
     await Venta.update({ estado_pedido: estado }, { where: { venta_id: ventaId }, transaction: t });
     await registrarAuditoria(req, {
       accion: 'PEDIDO_ESTADO',
       entidad: 'ventas',
       entidad_id: ventaId,
       sucursal_id: pedido.sucursal_id,
-      detalle: { folio: pedido.folio, estado_anterior: pedido.estado_pedido || 'PENDIENTE', estado_nuevo: estado },
+      detalle: { folio: pedido.folio, estado_anterior: estadoActual, estado_nuevo: estado, ...(reverso ? { reverso } : {}) },
       transaction: t
     });
 
     await t.commit();
-    res.json({ mensaje: 'Estado de pedido actualizado', estado });
+    let mensaje = 'Estado de pedido actualizado';
+    if (reverso) {
+      mensaje = reverso.productos
+        ? `Pedido cancelado. La mercancía regresó al inventario${reverso.efectivo ? ` y salen ${reverso.totalDevuelto.toFixed(2)} de la caja` : ''}.`
+        : 'Pedido cancelado.';
+    }
+    res.json({ mensaje, estado, ...(reverso ? { reverso } : {}) });
   } catch (err) {
     await t.rollback();
     responderErrorScope(res, err);
