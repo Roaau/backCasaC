@@ -10,7 +10,7 @@ import {
   resolverSucursalOperativa,
   responderErrorScope
 } from "../utils/scope.js";
-import { UNIDADES_VENTA } from "../utils/giros.js";
+import { UNIDADES_VENTA, permiteDecimales } from "../utils/giros.js";
 import { leerFilasInventario, COLUMNAS_PLANTILLA } from "../utils/importarExcel.js";
 import sequelize from "../config/database.js";
 import { obtenerEmpresaId, parseIdPositivo } from "../utils/scope.js";
@@ -359,8 +359,8 @@ export const importarProductos = (req, res) => {
         }
         if (datos.stock_actual !== undefined && datos.stock_actual !== null) {
           if (datos.stock_actual < 0) { omitidos++; errores.push(`Fila ${numero} (${datos.nombre}): existencia negativa`); continue; }
-          // Las piezas no se fraccionan: si la unidad es pieza, se redondea la existencia
-          if ((datos.unidad_venta ?? 'pieza') === 'pieza') datos.stock_actual = Math.round(datos.stock_actual);
+          // Piezas y bultos no se fraccionan: se redondea la existencia
+          if (!permiteDecimales(datos.unidad_venta ?? 'pieza')) datos.stock_actual = Math.round(datos.stock_actual);
         }
 
         const codigo = datos.codigo_barras ? String(datos.codigo_barras) : null;
@@ -506,7 +506,7 @@ export const descargarPlantilla = (req, res) => {
     ["Cómo llenar la plantilla"],
     ["Solo es obligatorio el Nombre. Las columnas que no uses puedes borrarlas."],
     ["Codigo de barras: si lo dejas vacío se genera un código interno (útil para granel, fruta, etc.)."],
-    ["Unidad: pieza, kg, litro o metro. kg/litro/metro permiten vender con decimales (ej. 0.250 kg)."],
+    ["Unidad: pieza, kg, litro, metro o bulto. kg/litro/metro permiten vender con decimales (ej. 0.250 kg)."],
     ["Precio = precio de venta al público. Costo = lo que te cuesta (para calcular tu ganancia)."],
     ["Caducidad: dd/mm/aaaa o mm/aaaa. Requiere receta: si / no."],
     ["También se aceptan encabezados como Código, Producto, Existencia, Precio venta, Laboratorio, Departamento."],

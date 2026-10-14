@@ -76,6 +76,7 @@ export const parsearUnidad = (valor) => {
   if (["kg", "kgs", "kilo", "kilos", "kilogramo", "kilogramos", "kgm"].includes(u)) return "kg";
   if (["l", "lt", "lts", "litro", "litros", "ltr"].includes(u)) return "litro";
   if (["m", "mt", "mts", "metro", "metros", "mtr"].includes(u)) return "metro";
+  if (["bulto", "bultos", "costal", "costales", "saco", "sacos"].includes(u)) return "bulto";
   return "pieza";
 };
 

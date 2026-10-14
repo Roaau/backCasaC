@@ -81,3 +81,21 @@ describe('Inventario sin productos desactivados', () => {
     expect(Producto.findAndCountAll.mock.calls[0][0].where).toEqual(expect.objectContaining({ empresa_id: 10, activo: false }));
   });
 });
+
+describe('Venta por bulto', () => {
+  const { cantidadValida, UNIDADES_VENTA } = require('../utils/giros.js');
+  const { parsearUnidad } = require('../utils/importarExcel.js');
+
+  test('bulto es una unidad valida y solo acepta enteros', () => {
+    expect(UNIDADES_VENTA).toContain('bulto');
+    expect(cantidadValida(2, 'bulto')).toBe(true);
+    expect(cantidadValida(1.5, 'bulto')).toBe(false);
+    expect(cantidadValida(1.5, 'kg')).toBe(true);
+  });
+
+  test('el Excel reconoce bulto, costal y saco', () => {
+    expect(parsearUnidad('Costal')).toBe('bulto');
+    expect(parsearUnidad('bultos')).toBe('bulto');
+    expect(parsearUnidad('saco')).toBe('bulto');
+  });
+});

@@ -27,7 +27,9 @@ export const GIROS = {
   forrajeria:    "Forrajería / Semillas",
 };
 
-export const UNIDADES_VENTA = ["pieza", "kg", "litro", "metro"];
+export const UNIDADES_VENTA = ["pieza", "kg", "litro", "metro", "bulto"];
+// Se venden completas: no aceptan decimales
+const UNIDADES_ENTERAS = ["pieza", "bulto"];
 
 export const normalizarGiro = (valor) => {
   const clave = String(valor || "").toLowerCase().trim();
@@ -36,8 +38,8 @@ export const normalizarGiro = (valor) => {
 
 export const nombreGiro = (clave) => GIROS[normalizarGiro(clave)];
 
-// pieza se vende en enteros; kg, litro y metro permiten decimales (venta a granel)
-export const permiteDecimales = (unidad) => UNIDADES_VENTA.includes(unidad) && unidad !== "pieza";
+// pieza y bulto se venden en enteros; kg, litro y metro permiten decimales (venta a granel)
+export const permiteDecimales = (unidad) => UNIDADES_VENTA.includes(unidad) && !UNIDADES_ENTERAS.includes(unidad);
 
 // Valida una cantidad segun la unidad del producto. Hasta 3 decimales (gramos / mililitros).
 export const cantidadValida = (cantidad, unidad = "pieza") => {
