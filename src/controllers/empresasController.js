@@ -65,6 +65,12 @@ export const updateEmpresa = async (req, res) => {
     for (const campo of camposPermitidos) {
       if (req.body[campo] !== undefined) datos[campo] = campo === 'giro' ? normalizarGiro(req.body[campo]) : req.body[campo];
     }
+    // Nombre que ven todos los usuarios y que sale en los tickets
+    if (req.body.razon_social !== undefined) {
+      const nombre = String(req.body.razon_social || '').trim();
+      if (!nombre || nombre.length > 120) return res.status(400).json({ error: 'Escribe el nombre del negocio (máximo 120 caracteres)' });
+      datos.razon_social = nombre;
+    }
     if (req.body.iva_activo !== undefined) datos.iva_activo = req.body.iva_activo === true || req.body.iva_activo === 'true';
     if (req.body.iva_porcentaje !== undefined) {
       const pct = Number(req.body.iva_porcentaje);

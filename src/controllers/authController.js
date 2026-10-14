@@ -184,7 +184,7 @@ export const registro = async (req, res) => {
     nombre, usuario, contrasena, codigo_invitacion,
     rfc, razon_social, regimen_fiscal,
     email, codigo_verificacion,
-    plan, giro, sucursales, periodo, codigo_referido
+    plan, giro, sucursales, periodo, codigo_referido, nombre_negocio
   } = req.body;
 
   if (!nombre || !usuario || !contrasena) {
@@ -286,7 +286,7 @@ export const registro = async (req, res) => {
       const empresa = await Empresa.create(
         {
           rfc:            rfc ? rfc.trim().toUpperCase() : null,
-          razon_social:   razon_social?.trim() || nombre.trim(),
+          razon_social:   String(nombre_negocio || '').trim().slice(0, 120) || razon_social?.trim() || nombre.trim(),
           regimen_fiscal: regimen_fiscal || null,
           activo:         true,
           estado:         estadoInicial,

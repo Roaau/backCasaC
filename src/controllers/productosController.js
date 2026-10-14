@@ -134,7 +134,10 @@ export const getAll = async (req, res) => {
     const categoria   = req.query.categoria?.toString().trim() || '';
     const offset      = (page - 1) * limit;
 
-    const where = { empresa_id };
+    // Los desactivados (eliminados con historial) no se listan; ?inactivos=true muestra solo esos
+    const where = req.query.inactivos === 'true'
+      ? { empresa_id, activo: false }
+      : { empresa_id, activo: { [Op.not]: false } };
     if (q) {
       where[Op.or] = [
         { nombre:        { [Op.iLike]: `%${q}%` } },
@@ -177,7 +180,7 @@ export const stockBajoCount = async (req, res) => {
   try {
     const scope = await resolverScopeSucursales(req);
     const rows = await Producto.findAll({
-      where: { empresa_id: scope.empresa_id },
+      where: { empresa_id: scope.empresa_id, activo: { [Op.not]: false } },
       include: [{ model: StockSucursal, where: { sucursal_id: scope.whereSucursal }, required: false, attributes: ['stock_actual', 'stock_minimo'] }],
       attributes: ['stock_actual', 'stock_minimo'],
     });

@@ -224,6 +224,51 @@ export const crearVenta = async (req, res) => {
   }
 };
 
+// GET /api/ventas/hoy — ventas de hoy de la sucursal operativa.
+// Empleado: solo las suyas. Admin: todas las de la sucursal, con el desglose por cajero.
+export const ventasDeHoy = async (req, res) => {
+  try {
+    const sucursal_id = await resolverSucursalOperativa(req);
+    const admin = esAdminEmpresa(req.usuario);
+    const soloMias = !admin || req.query.mias === 'true';
+    const { inicio, fin } = rangoFechasReporte(fechaLocalISO());
+    const ventas = await sequelize.query(`
+      SELECT v.venta_id, v.folio, v.fecha, v.total, v.tipo_venta,
+             COALESCE(v.tipo_pago, 'efectivo') AS tipo_pago, v.pedido_numero, v.nombre_cliente,
+             v.estado_pedido, v.usuario_id, u.nombre AS nombre_cajero
+      FROM ventas v
+      LEFT JOIN usuarios u ON u.usuario_id = v.usuario_id
+      WHERE v.sucursal_id = :sucursal_id
+        AND v.fecha BETWEEN :inicio AND :fin
+        ${soloMias ? 'AND v.usuario_id = :usuario_id' : ''}
+      ORDER BY v.fecha DESC
+    `, { replacements: { sucursal_id, inicio, fin, usuario_id: req.usuario.id }, type: QueryTypes.SELECT });
+
+    const suma = (lista) => Math.round(lista.reduce((s, v) => s + Number(v.total || 0), 0) * 100) / 100;
+    const porCajero = new Map();
+    for (const v of ventas) {
+      const clave = v.usuario_id ?? 0;
+      const actual = porCajero.get(clave) || { usuario_id: v.usuario_id, nombre: v.nombre_cajero || 'Sin nombre', ventas: 0, total: 0 };
+      actual.ventas += 1;
+      actual.total = Math.round((actual.total + Number(v.total || 0)) * 100) / 100;
+      porCajero.set(clave, actual);
+    }
+    res.json({
+      solo_mias: soloMias,
+      resumen: {
+        total: suma(ventas),
+        conteo: ventas.length,
+        efectivo: suma(ventas.filter(v => v.tipo_pago === 'efectivo')),
+        terminal: suma(ventas.filter(v => v.tipo_pago !== 'efectivo')),
+      },
+      por_cajero: [...porCajero.values()].sort((a, b) => b.total - a.total),
+      ventas: ventas.slice(0, 50),
+    });
+  } catch (e) {
+    responderErrorScope(res, e);
+  }
+};
+
 export const getVentaPorId = async (req, res) => {
   try {
     const { id } = req.params;
