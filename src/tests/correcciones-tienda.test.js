@@ -99,3 +99,34 @@ describe('Venta por bulto', () => {
     expect(parsearUnidad('saco')).toBe('bulto');
   });
 });
+
+describe('Inventario: agotados y poca existencia', () => {
+  const { Op } = require('sequelize');
+  beforeEach(() => {
+    jest.clearAllMocks();
+    Sucursal.findOne.mockResolvedValue({ sucursal_id: 5, empresa_id: 10, activa: true });
+    Producto.findAndCountAll.mockResolvedValue({ count: 0, rows: [] });
+    db.literal = jest.fn(sql => ({ sql }));
+  });
+
+  const filtro = async (existencia) => {
+    await getAll({ usuario: { id: 1, empresa_id: 10, sucursal_id: 5, rol: 1 }, query: { existencia } }, mockRes());
+    return Producto.findAndCountAll.mock.calls[0][0].where[Op.and]?.[0]?.sql;
+  };
+
+  test('agotados: existencia de la sucursal en 0 o menos', async () => {
+    const sql = await filtro('agotados');
+    expect(sql).toContain('ss.sucursal_id = 5');
+    expect(sql).toMatch(/<= 0$/);
+  });
+
+  test('con existencia y poca existencia', async () => {
+    expect(await filtro('con')).toMatch(/> 0$/);
+    jest.clearAllMocks();
+    expect(await filtro('bajo')).toContain('stock_minimo');
+  });
+
+  test('sin filtro no restringe la existencia', async () => {
+    expect(await filtro(undefined)).toBeUndefined();
+  });
+});

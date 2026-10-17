@@ -124,6 +124,16 @@ export const buscarProducto = async (req, res) => {
   }
 };
 
+const condicionExistencia = (tipo, sucursalId) => {
+  const suc = Number(sucursalId) || 0;
+  const stock = `COALESCE((SELECT ss.stock_actual FROM stock_sucursal ss WHERE ss.producto_id = "Producto"."producto_id" AND ss.sucursal_id = ${suc}), "Producto"."stock_actual", 0)`;
+  const minimo = `COALESCE((SELECT ss.stock_minimo FROM stock_sucursal ss WHERE ss.producto_id = "Producto"."producto_id" AND ss.sucursal_id = ${suc}), "Producto"."stock_minimo", 5)`;
+  if (tipo === 'con')      return sequelize.literal(`${stock} > 0`);
+  if (tipo === 'agotados') return sequelize.literal(`${stock} <= 0`);
+  if (tipo === 'bajo')     return sequelize.literal(`(${stock} > 0 AND ${stock} <= ${minimo})`);
+  return null;
+};
+
 export const getAll = async (req, res) => {
   try {
     const empresa_id  = req.usuario.empresa_id;
@@ -138,6 +148,10 @@ export const getAll = async (req, res) => {
     const where = req.query.inactivos === 'true'
       ? { empresa_id, activo: false }
       : { empresa_id, activo: { [Op.not]: false } };
+
+    // ?existencia=con | agotados | bajo  (sobre el stock de la sucursal; sin registro usa el del producto)
+    const filtroExistencia = condicionExistencia(req.query.existencia, sucursal_id);
+    if (filtroExistencia) where[Op.and] = [filtroExistencia];
     if (q) {
       where[Op.or] = [
         { nombre:        { [Op.iLike]: `%${q}%` } },

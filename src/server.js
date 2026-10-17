@@ -43,6 +43,7 @@ import empresasRoutes from "./routes/empresasRoutes.js";
 import sucursalesRoutes from "./routes/sucursalesRoutes.js";
 import catalogoRoutes from "./routes/catalogoRoutes.js";
 import proveedoresRoutes from "./routes/proveedoresRoutes.js";
+import clientesRoutes from "./routes/clientesRoutes.js";
 import comprasRoutes from "./routes/comprasRoutes.js";
 import creditosRoutes from "./routes/creditosRoutes.js";
 import devolucionRoutes from "./routes/devolucionRoutes.js";
@@ -336,6 +337,7 @@ app.use("/api/empresas",     verificarToken, verificarAdmin, empresasRoutes);
 app.use("/api/sucursales",   verificarToken, sucursalesRoutes);
 app.use("/api/catalogo",     verificarToken, catalogoRoutes);
 app.use("/api/proveedores",  verificarToken, proveedoresRoutes);
+app.use("/api/clientes",     verificarToken, clientesRoutes);
 app.use("/api/compras",      verificarToken, comprasRoutes);
 app.use("/api/creditos",      verificarToken, creditosRoutes);
 app.use("/api/devoluciones", verificarToken, devolucionRoutes);
@@ -366,6 +368,8 @@ try {
   // para no modificar la BD de produccion al correr el backend en local con DATABASE_URL de Supabase.
   await sequelize.sync({ alter: process.env.DB_SYNC_ALTER === "true" });
   console.log("Modelos sincronizados.");
+  // Tablas creadas por sync: cerrar la API publica de Supabase igual que las demas
+  await sequelize.query("ALTER TABLE IF EXISTS clientes ENABLE ROW LEVEL SECURITY").catch(() => {});
   // Columnas opcionales que pueden haber quedado NOT NULL en BD antigua
   await sequelize.query("ALTER TABLE IF EXISTS sucursales ALTER COLUMN cp_sat DROP NOT NULL").catch(() => {});
   await sequelize.query("ALTER TABLE IF EXISTS sucursales ALTER COLUMN direccion DROP NOT NULL").catch(() => {});
