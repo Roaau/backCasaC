@@ -14,6 +14,7 @@ import { UNIDADES_VENTA, permiteDecimales } from "../utils/giros.js";
 import { leerFilasInventario, COLUMNAS_PLANTILLA } from "../utils/importarExcel.js";
 import sequelize from "../config/database.js";
 import { obtenerEmpresaId, parseIdPositivo } from "../utils/scope.js";
+import { fechaLocalISO } from "../utils/fechas.js";
 
 // GET /api/productos/:id/stock-sucursales (solo admin; ruta con verificarAdmin)
 // Existencia del producto en cada sucursal activa de la empresa. Sin registro de stock = 0.
@@ -152,6 +153,16 @@ export const getAll = async (req, res) => {
     // ?existencia=con | agotados | bajo  (sobre el stock de la sucursal; sin registro usa el del producto)
     const filtroExistencia = condicionExistencia(req.query.existencia, sucursal_id);
     if (filtroExistencia) where[Op.and] = [filtroExistencia];
+
+    // ?caducidad=30: con existencia y caducados o que caducan en esos dias (lo mas urgente primero)
+    const diasCaducidad = parseInt(req.query.caducidad);
+    const porCaducar = Number.isInteger(diasCaducidad) && diasCaducidad > 0 && diasCaducidad <= 365;
+    if (porCaducar) {
+      const limite = new Date(`${fechaLocalISO()}T12:00:00Z`);
+      limite.setUTCDate(limite.getUTCDate() + diasCaducidad);
+      where.fecha_caducidad = { [Op.ne]: null, [Op.lte]: limite.toISOString().slice(0, 10) };
+      where[Op.and] = [...(where[Op.and] ?? []), condicionExistencia('con', sucursal_id)];
+    }
     if (q) {
       where[Op.or] = [
         { nombre:        { [Op.iLike]: `%${q}%` } },
@@ -173,7 +184,7 @@ export const getAll = async (req, res) => {
         required: false,
         attributes: ['stock_actual', 'stock_minimo']
       }],
-      order: [['producto_id', 'DESC']],
+      order: porCaducar ? [['fecha_caducidad', 'ASC'], ['producto_id', 'DESC']] : [['producto_id', 'DESC']],
       limit,
       offset,
     });

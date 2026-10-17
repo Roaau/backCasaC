@@ -126,6 +126,14 @@ describe('Inventario: agotados y poca existencia', () => {
     expect(await filtro('bajo')).toContain('stock_minimo');
   });
 
+  test('por caducar: con fecha hasta N dias, con existencia y ordenado por fecha', async () => {
+    await getAll({ usuario: { id: 1, empresa_id: 10, sucursal_id: 5, rol: 1 }, query: { caducidad: '30' } }, mockRes());
+    const opciones = Producto.findAndCountAll.mock.calls[0][0];
+    expect(opciones.where.fecha_caducidad[Op.lte]).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect(opciones.where[Op.and][0].sql).toMatch(/> 0$/);
+    expect(opciones.order[0]).toEqual(['fecha_caducidad', 'ASC']);
+  });
+
   test('sin filtro no restringe la existencia', async () => {
     expect(await filtro(undefined)).toBeUndefined();
   });
