@@ -20,6 +20,7 @@ import { validarLineaVenta, calcularTotalVenta } from "../utils/ventas.js";
 import { cfdiHabilitado } from "../config/features.js";
 import { cantidadValida } from "../utils/giros.js";
 import { regresarAInventario } from "../utils/inventario.js";
+import { normalizarCobro, efectivoADevolver, montosDeVenta, sqlEfectivo, sqlTarjeta, sqlTransferencia } from "../utils/pagos.js";
 
 const esCajaDeHoy = (caja) => esMismoDiaLocal(caja.fecha_apertura);
 
@@ -170,7 +171,17 @@ export const crearVenta = async (req, res) => {
       descuentoPorcentaje: descuento_porcentaje,
       totalEnviado: total
     });
-    await nuevaVenta.update({ total: totalServidor }, { transaction: t });
+    // Cobro: efectivo, terminal, transferencia o mixto; los montos deben cuadrar con el total del servidor
+    const cobro = normalizarCobro({ tipo_pago, pagos: req.body.pagos }, totalServidor);
+    await nuevaVenta.update({
+      total: totalServidor,
+      tipo_pago: cobro.tipo_pago,
+      monto_efectivo: cobro.monto_efectivo,
+      monto_tarjeta: cobro.monto_tarjeta,
+      monto_transferencia: cobro.monto_transferencia,
+      referencia_pago: cobro.monto_transferencia > 0 ? (String(req.body.referencia_pago || '').trim().slice(0, 60) || null) : null,
+      forma_pago: forma_pago || cobro.forma_pago_sat
+    }, { transaction: t });
 
     if (datos_cfdi) {
       const { receptor_rfc, receptor_nombre, receptor_cp, receptor_regimen, uso_cfdi, guardar_cliente } = datos_cfdi;
@@ -212,7 +223,7 @@ export const crearVenta = async (req, res) => {
       entidad: "ventas",
       entidad_id: nuevaVenta.venta_id,
       sucursal_id,
-      detalle: { folio, total: totalServidor, tipo_venta, tipo_pago: tipo_pago || "efectivo", pedido_numero },
+      detalle: { folio, total: totalServidor, tipo_venta, tipo_pago: cobro.tipo_pago, monto_efectivo: cobro.monto_efectivo, monto_tarjeta: cobro.monto_tarjeta, monto_transferencia: cobro.monto_transferencia, pedido_numero },
       transaction: t
     });
 
@@ -235,6 +246,7 @@ export const ventasDeHoy = async (req, res) => {
     const ventas = await sequelize.query(`
       SELECT v.venta_id, v.folio, v.fecha, v.total, v.tipo_venta,
              COALESCE(v.tipo_pago, 'efectivo') AS tipo_pago, v.pedido_numero, v.nombre_cliente,
+             ${sqlEfectivo('v')} AS monto_efectivo, ${sqlTarjeta('v')} AS monto_tarjeta, ${sqlTransferencia('v')} AS monto_transferencia,
              v.estado_pedido, v.usuario_id, u.nombre AS nombre_cajero
       FROM ventas v
       LEFT JOIN usuarios u ON u.usuario_id = v.usuario_id
@@ -244,7 +256,7 @@ export const ventasDeHoy = async (req, res) => {
       ORDER BY v.fecha DESC
     `, { replacements: { sucursal_id, inicio, fin, usuario_id: req.usuario.id }, type: QueryTypes.SELECT });
 
-    const suma = (lista) => Math.round(lista.reduce((s, v) => s + Number(v.total || 0), 0) * 100) / 100;
+    const suma = (lista, campo = 'total') => Math.round(lista.reduce((s, v) => s + Number(v[campo] || 0), 0) * 100) / 100;
     const porCajero = new Map();
     for (const v of ventas) {
       const clave = v.usuario_id ?? 0;
@@ -258,8 +270,9 @@ export const ventasDeHoy = async (req, res) => {
       resumen: {
         total: suma(ventas),
         conteo: ventas.length,
-        efectivo: suma(ventas.filter(v => v.tipo_pago === 'efectivo')),
-        terminal: suma(ventas.filter(v => v.tipo_pago !== 'efectivo')),
+        efectivo: suma(ventas, 'monto_efectivo'),
+        terminal: suma(ventas, 'monto_tarjeta'),
+        transferencia: suma(ventas, 'monto_transferencia'),
       },
       por_cajero: [...porCajero.values()].sort((a, b) => b.total - a.total),
       ventas: ventas.slice(0, 50),
@@ -360,7 +373,7 @@ const redondear2 = (n) => Math.round(n * 100) / 100;
 // Se guarda como devolucion para que caja y reportes lo descuenten igual que cualquier devolucion.
 export async function revertirPedidoCancelado(req, pedido, transaction) {
   const vendidos = await DetalleVenta.findAll({ where: { venta_id: pedido.venta_id }, transaction });
-  const previas = await Devolucion.findAll({ where: { venta_id: pedido.venta_id }, attributes: ['devolucion_id'], transaction });
+  const previas = await Devolucion.findAll({ where: { venta_id: pedido.venta_id }, attributes: ['devolucion_id', 'total_devuelto'], transaction });
   const devuelto = new Map();
   if (previas.length) {
     const detallesPrevios = await DetalleDevolucion.findAll({
@@ -385,9 +398,11 @@ export async function revertirPedidoCancelado(req, pedido, transaction) {
   const totalDevuelto = redondear2(lineas.reduce((s, l) => s + l.subtotal, 0));
   if (!lineas.length) return { productos: 0, totalDevuelto: 0, efectivo: false };
 
-  const efectivo = (pedido.tipo_pago || 'efectivo') === 'efectivo';
+  // Sale del cajon solo lo que se cobro en efectivo (primero lo ya devuelto antes); lo demas va por terminal/transferencia
+  const yaDevuelto = previas.reduce((s, d) => s + Number(d.total_devuelto || 0), 0);
+  const efectivoSale = efectivoADevolver(pedido, totalDevuelto, yaDevuelto);
   let caja = null;
-  if (efectivo && totalDevuelto > 0) {
+  if (efectivoSale > 0) {
     caja = await Caja.findOne({ where: { sucursal_id: pedido.sucursal_id, fecha_cierre: null }, transaction });
     if (!caja) {
       const error = new Error('Abre la caja de la sucursal del pedido para registrar la devolución del dinero.');
@@ -434,13 +449,13 @@ export async function revertirPedidoCancelado(req, pedido, transaction) {
       caja_id: caja.caja_id,
       usuario_id,
       tipo_movimiento: 'DEVOLUCION',
-      monto: totalDevuelto,
+      monto: efectivoSale,
       concepto: `Pedido cancelado ${pedido.folio}`,
       fecha: new Date()
     }, { transaction });
   }
 
-  return { productos: lineas.length, totalDevuelto, efectivo: !!caja };
+  return { productos: lineas.length, totalDevuelto, efectivo: !!caja, efectivoDevuelto: efectivoSale };
 }
 
 export const actualizarEstadoPedido = async (req, res) => {
@@ -454,7 +469,8 @@ export const actualizarEstadoPedido = async (req, res) => {
   try {
     const filtroEmpleado = esAdminEmpresa(req.usuario) ? "" : "AND v.sucursal_id = :sucursal_id";
     const [pedido] = await sequelize.query(
-      `SELECT v.venta_id, v.folio, v.sucursal_id, v.estado_pedido, v.total, v.tipo_pago, s.empresa_id
+      `SELECT v.venta_id, v.folio, v.sucursal_id, v.estado_pedido, v.total, v.tipo_pago,
+              v.monto_efectivo, v.monto_tarjeta, v.monto_transferencia, s.empresa_id
        FROM ventas v
        JOIN sucursales s ON v.sucursal_id = s.sucursal_id
        WHERE v.venta_id = :ventaId
@@ -502,7 +518,7 @@ export const actualizarEstadoPedido = async (req, res) => {
     let mensaje = 'Estado de pedido actualizado';
     if (reverso) {
       mensaje = reverso.productos
-        ? `Pedido cancelado. La mercancía regresó al inventario${reverso.efectivo ? ` y salen ${reverso.totalDevuelto.toFixed(2)} de la caja` : ''}.`
+        ? `Pedido cancelado. La mercancía regresó al inventario${reverso.efectivo ? ` y salen $${reverso.efectivoDevuelto.toFixed(2)} de la caja` : ''}.`
         : 'Pedido cancelado.';
     }
     res.json({ mensaje, estado, ...(reverso ? { reverso } : {}) });

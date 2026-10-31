@@ -3,6 +3,7 @@ import { QueryTypes } from 'sequelize';
 import { filtroEmpresa } from '../utils/filtros.js';
 import { rangoFechasReporte } from '../utils/fechas.js';
 import ExcelJS from 'exceljs';
+import { sqlEfectivo, sqlTarjeta, sqlTransferencia } from '../utils/pagos.js';
 
 export const getReporteVentas = async (req, res) => {
     try {
@@ -18,6 +19,10 @@ export const getReporteVentas = async (req, res) => {
                 v.total,
                 v.tipo_venta,
                 COALESCE(v.tipo_pago, 'efectivo') AS tipo_pago,
+                ${sqlEfectivo('v')} AS monto_efectivo,
+                ${sqlTarjeta('v')} AS monto_tarjeta,
+                ${sqlTransferencia('v')} AS monto_transferencia,
+                v.referencia_pago,
                 v.pedido_numero,
                 v.nombre_cliente,
                 v.telefono_cliente,
@@ -45,12 +50,14 @@ export const getReporteVentas = async (req, res) => {
 
         const totalDinero  = ventas.reduce((acc, curr) => acc + parseFloat(curr.total), 0);
         const conteoVentas = ventas.length;
-        const totalEfectivo = ventas.filter(v => (v.tipo_pago || 'efectivo') === 'efectivo').reduce((acc, curr) => acc + parseFloat(curr.total), 0);
-        const totalTarjeta = ventas.filter(v => (v.tipo_pago || 'efectivo') === 'tarjeta').reduce((acc, curr) => acc + parseFloat(curr.total), 0);
+        const sumaCampo = (campo) => ventas.reduce((acc, curr) => acc + (parseFloat(curr[campo]) || 0), 0);
+        const totalEfectivo = sumaCampo('monto_efectivo');
+        const totalTarjeta = sumaCampo('monto_tarjeta');
+        const totalTransferencia = sumaCampo('monto_transferencia');
         const totalPedidos = ventas.filter(v => v.tipo_venta === 'Pedido').length;
         const ticketPromedio = conteoVentas > 0 ? totalDinero / conteoVentas : 0;
 
-        res.json({ datos: ventas, resumen: { totalDinero, conteoVentas, totalEfectivo, totalTarjeta, totalPedidos, ticketPromedio } });
+        res.json({ datos: ventas, resumen: { totalDinero, conteoVentas, totalEfectivo, totalTarjeta, totalTransferencia, totalPedidos, ticketPromedio } });
 
     } catch (error) {
         res.status(500).json({ error: "Error al generar reporte de ventas" });
@@ -117,8 +124,9 @@ export const getReporteCaja = async (req, res) => {
                 c.monto_final,
                 (c.monto_final - (
                     c.monto_inicial +
-                    (SELECT COALESCE(SUM(total),0) FROM "ventas" WHERE fecha BETWEEN c.fecha_apertura AND c.fecha_cierre AND sucursal_id = c.sucursal_id AND COALESCE(tipo_pago, 'efectivo') = 'efectivo') -
-                    (SELECT COALESCE(SUM(monto),0) FROM "movimiento_caja" WHERE caja_id = c.caja_id AND tipo_movimiento = 'EGRESO')
+                    (SELECT COALESCE(SUM(${sqlEfectivo('v')}),0) FROM "ventas" v WHERE v.fecha BETWEEN c.fecha_apertura AND c.fecha_cierre AND v.sucursal_id = c.sucursal_id) +
+                    (SELECT COALESCE(SUM(monto),0) FROM "movimiento_caja" WHERE caja_id = c.caja_id AND tipo_movimiento = 'INGRESO') -
+                    (SELECT COALESCE(SUM(monto),0) FROM "movimiento_caja" WHERE caja_id = c.caja_id AND tipo_movimiento IN ('EGRESO', 'DEVOLUCION'))
                 )) as diferencia,
                 u1.nombre as abrio,
                 u2.nombre as cerro,
@@ -226,9 +234,9 @@ const construirReporteDiario = async (req) => {
             s.nombre AS nombre_sucursal,
             COUNT(v.venta_id)::int AS conteo_ventas,
             COALESCE(SUM(v.total), 0) AS total_ventas,
-            COALESCE(SUM(CASE WHEN LOWER(COALESCE(v.tipo_pago, 'efectivo')) = 'efectivo' THEN v.total ELSE 0 END), 0) AS total_efectivo,
-            COALESCE(SUM(CASE WHEN LOWER(COALESCE(v.tipo_pago, '')) = 'tarjeta' THEN v.total ELSE 0 END), 0) AS total_tarjeta,
-            COALESCE(SUM(CASE WHEN LOWER(COALESCE(v.tipo_pago, '')) = 'transferencia' THEN v.total ELSE 0 END), 0) AS total_transferencia,
+            COALESCE(SUM(${sqlEfectivo('v')}), 0) AS total_efectivo,
+            COALESCE(SUM(${sqlTarjeta('v')}), 0) AS total_tarjeta,
+            COALESCE(SUM(${sqlTransferencia('v')}), 0) AS total_transferencia,
             COALESCE(SUM(CASE WHEN LOWER(COALESCE(v.tipo_pago, '')) = 'credito' THEN v.total ELSE 0 END), 0) AS total_credito,
             COALESCE(SUM(CASE WHEN v.tipo_venta = 'Pedido' THEN 1 ELSE 0 END), 0)::int AS total_pedidos
         FROM "ventas" v
@@ -251,14 +259,14 @@ const construirReporteDiario = async (req) => {
             u2.nombre AS cerro,
             (
                 c.monto_inicial
-                + COALESCE((SELECT SUM(v.total) FROM "ventas" v WHERE v.sucursal_id = c.sucursal_id AND v.fecha BETWEEN c.fecha_apertura AND COALESCE(c.fecha_cierre, :fin) AND LOWER(COALESCE(v.tipo_pago, 'efectivo')) = 'efectivo'), 0)
+                + COALESCE((SELECT SUM(${sqlEfectivo('v')}) FROM "ventas" v WHERE v.sucursal_id = c.sucursal_id AND v.fecha BETWEEN c.fecha_apertura AND COALESCE(c.fecha_cierre, :fin)), 0)
                 + COALESCE((SELECT SUM(m.monto) FROM "movimiento_caja" m WHERE m.caja_id = c.caja_id AND UPPER(m.tipo_movimiento) = 'INGRESO'), 0)
                 - COALESCE((SELECT SUM(m.monto) FROM "movimiento_caja" m WHERE m.caja_id = c.caja_id AND UPPER(m.tipo_movimiento) IN ('EGRESO', 'DEVOLUCION')), 0)
             ) AS monto_esperado,
             CASE WHEN c.monto_final IS NULL THEN NULL ELSE (
                 c.monto_final - (
                     c.monto_inicial
-                    + COALESCE((SELECT SUM(v.total) FROM "ventas" v WHERE v.sucursal_id = c.sucursal_id AND v.fecha BETWEEN c.fecha_apertura AND COALESCE(c.fecha_cierre, :fin) AND LOWER(COALESCE(v.tipo_pago, 'efectivo')) = 'efectivo'), 0)
+                    + COALESCE((SELECT SUM(${sqlEfectivo('v')}) FROM "ventas" v WHERE v.sucursal_id = c.sucursal_id AND v.fecha BETWEEN c.fecha_apertura AND COALESCE(c.fecha_cierre, :fin)), 0)
                     + COALESCE((SELECT SUM(m.monto) FROM "movimiento_caja" m WHERE m.caja_id = c.caja_id AND UPPER(m.tipo_movimiento) = 'INGRESO'), 0)
                     - COALESCE((SELECT SUM(m.monto) FROM "movimiento_caja" m WHERE m.caja_id = c.caja_id AND UPPER(m.tipo_movimiento) IN ('EGRESO', 'DEVOLUCION')), 0)
                 )

@@ -7,6 +7,7 @@ import { generarNotificacionesEmpresa } from "./notificacionesController.js";
 import Notificacion from "../models/Notificacion.js";
 import Empresa from "../models/EmpresaModel.js";
 import { nombreGiro } from "../utils/giros.js";
+import { sqlEfectivo, sqlTarjeta, sqlTransferencia } from '../utils/pagos.js';
 
 const GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models";
 const DEFAULT_MODEL = process.env.GEMINI_MODEL || "gemini-3.1-flash-lite";
@@ -137,8 +138,9 @@ async function ventasResumen(scope, fechaInicio, fechaFin) {
   const rows = await sequelize.query(`
     SELECT COUNT(*)::int AS ventas,
            COALESCE(SUM(v.total),0)::numeric AS total,
-           COALESCE(SUM(CASE WHEN COALESCE(v.tipo_pago,'efectivo')='efectivo' THEN v.total ELSE 0 END),0)::numeric AS efectivo,
-           COALESCE(SUM(CASE WHEN COALESCE(v.tipo_pago,'efectivo')='tarjeta' THEN v.total ELSE 0 END),0)::numeric AS tarjeta,
+           COALESCE(SUM(${sqlEfectivo('v')}),0)::numeric AS efectivo,
+           COALESCE(SUM(${sqlTarjeta('v')}),0)::numeric AS tarjeta,
+           COALESCE(SUM(${sqlTransferencia('v')}),0)::numeric AS transferencia,
            COALESCE(SUM(CASE WHEN v.tipo_venta='Pedido' THEN 1 ELSE 0 END),0)::int AS pedidos
     FROM ventas v
     WHERE v.sucursal_id IN (:sucursalIds) AND v.fecha BETWEEN :inicio AND :fin
@@ -204,7 +206,7 @@ async function cajaResumen(scope, fechaInicio, fechaFin) {
   return sequelize.query(`
     SELECT c.caja_id, s.nombre AS sucursal, c.fecha_apertura, c.fecha_cierre,
            c.monto_inicial, c.monto_final,
-           COALESCE((SELECT SUM(v.total) FROM ventas v WHERE v.sucursal_id = c.sucursal_id AND v.fecha >= c.fecha_apertura AND (c.fecha_cierre IS NULL OR v.fecha <= c.fecha_cierre) AND COALESCE(v.tipo_pago,'efectivo')='efectivo'),0) AS ventas_efectivo,
+           COALESCE((SELECT SUM(${sqlEfectivo('v')}) FROM ventas v WHERE v.sucursal_id = c.sucursal_id AND v.fecha >= c.fecha_apertura AND (c.fecha_cierre IS NULL OR v.fecha <= c.fecha_cierre)),0) AS ventas_efectivo,
            COALESCE((SELECT SUM(m.monto) FROM movimiento_caja m WHERE m.caja_id = c.caja_id AND m.tipo_movimiento='INGRESO'),0) AS ingresos,
            COALESCE((SELECT SUM(m.monto) FROM movimiento_caja m WHERE m.caja_id = c.caja_id AND m.tipo_movimiento IN ('EGRESO','DEVOLUCION')),0) AS egresos,
            COALESCE((SELECT SUM(m.monto) FROM movimiento_caja m WHERE m.caja_id = c.caja_id AND m.tipo_movimiento IN ('FALTANTE','SOBRANTE')),0) AS ajustes

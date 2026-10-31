@@ -5,6 +5,7 @@ import MovimientoCaja from '../models/MovimientoCaja.js';
 import { resolverSucursalOperativa, responderErrorScope, validarSucursalEmpresa } from '../utils/scope.js';
 import { registrarAuditoria } from '../utils/auditoria.js';
 import { esMismoDiaLocal } from '../utils/fechas.js';
+import { sqlEfectivo, sqlTarjeta, sqlTransferencia } from '../utils/pagos.js';
 
 const esCajaDeHoy = (caja) => esMismoDiaLocal(caja.fecha_apertura);
 async function calcularTotalesCaja(caja) {
@@ -12,17 +13,22 @@ async function calcularTotalesCaja(caja) {
   const montoInicial = parseFloat(caja.monto_inicial) || 0;
 
   // Una caja cerrada solo cuenta las ventas hasta su cierre
-  const limiteCierre = caja.fecha_cierre ? 'AND fecha <= :fechaCierre' : '';
+  const limiteCierre = caja.fecha_cierre ? 'AND v.fecha <= :fechaCierre' : '';
   const ventasRaw = await sequelize.query(
-    `SELECT COALESCE(SUM(total), 0) as total
-     FROM "ventas"
-     WHERE fecha >= :fechaInicio
+    `SELECT COALESCE(SUM(${sqlEfectivo('v')}), 0)       AS efectivo,
+            COALESCE(SUM(${sqlTarjeta('v')}), 0)        AS terminal,
+            COALESCE(SUM(${sqlTransferencia('v')}), 0)  AS transferencia,
+            COUNT(*)                                    AS conteo
+     FROM "ventas" v
+     WHERE v.fecha >= :fechaInicio
        ${limiteCierre}
-       AND sucursal_id = :sucursal_id
-       AND COALESCE(tipo_pago, 'efectivo') = 'efectivo'`,
+       AND v.sucursal_id = :sucursal_id`,
     { replacements: { fechaInicio: caja.fecha_apertura, fechaCierre: caja.fecha_cierre, sucursal_id: caja.sucursal_id }, type: QueryTypes.SELECT }
   );
-  const totalVentas = parseFloat(ventasRaw[0]?.total) || 0;
+  // totalVentas = solo lo cobrado en efectivo (lo que entra al cajon)
+  const totalVentas = parseFloat(ventasRaw[0]?.efectivo) || 0;
+  const totalTerminal = parseFloat(ventasRaw[0]?.terminal) || 0;
+  const totalTransferencia = parseFloat(ventasRaw[0]?.transferencia) || 0;
 
   const ingresosMov     = await MovimientoCaja.sum('monto', { where: { caja_id: cajaId, tipo_movimiento: 'INGRESO'    } }) || 0;
   const egresosMov      = await MovimientoCaja.sum('monto', { where: { caja_id: cajaId, tipo_movimiento: 'EGRESO'     } }) || 0;
@@ -30,7 +36,19 @@ async function calcularTotalesCaja(caja) {
   const totalSalidas    = Number(egresosMov) + Number(devolucionesMov);
   const montoEsperado   = montoInicial + Number(totalVentas) + Number(ingresosMov) - totalSalidas;
 
-  return { caja_id: cajaId, montoInicial, totalVentas, totalIngresos: Number(ingresosMov), totalEgresos: totalSalidas, montoEsperado, fecha_apertura: caja.fecha_apertura };
+  return {
+    caja_id: cajaId,
+    montoInicial,
+    totalVentas,
+    totalTerminal,
+    totalTransferencia,
+    totalIngresos: Number(ingresosMov),
+    totalRetiros: Number(egresosMov),
+    totalDevoluciones: Number(devolucionesMov),
+    totalEgresos: totalSalidas,
+    montoEsperado,
+    fecha_apertura: caja.fecha_apertura
+  };
 }
 
 export const estadoCaja = async (req, res) => {
@@ -100,7 +118,17 @@ export const obtenerTotalesCaja = async (req, res) => {
     if (!caja) return res.status(404).json({ error: 'Caja no encontrada' });
     await validarSucursalEmpresa(req.usuario, caja.sucursal_id);
 
-    return res.json(await calcularTotalesCaja(caja));
+    // Entradas, retiros y devoluciones de efectivo con quien los hizo, para el corte
+    const movimientos = await sequelize.query(
+      `SELECT m.movimiento_caja_id, m.tipo_movimiento, m.monto, m.concepto, m.fecha, u.nombre AS usuario
+         FROM movimiento_caja m
+         LEFT JOIN usuarios u ON u.usuario_id = m.usuario_id
+        WHERE m.caja_id = :cajaId
+          AND m.tipo_movimiento IN ('INGRESO', 'EGRESO', 'DEVOLUCION')
+        ORDER BY m.fecha ASC`,
+      { replacements: { cajaId }, type: QueryTypes.SELECT }
+    );
+    return res.json({ ...(await calcularTotalesCaja(caja)), movimientos });
   } catch (err) {
     return responderErrorScope(res, err);
   }
@@ -139,7 +167,7 @@ export const registrarMovimiento = async (req, res) => {
     await registrarAuditoria(req, {
       accion: "CAJA_MOVIMIENTO",
       entidad: "movimiento_caja",
-      entidad_id: mov.movimiento_id,
+      entidad_id: mov.movimiento_caja_id,
       sucursal_id,
       detalle: { caja_id, tipo_movimiento: tipo, monto: montoNum, concepto: conceptoLimpio, efectivo_disponible_antes: totales.montoEsperado }
     });

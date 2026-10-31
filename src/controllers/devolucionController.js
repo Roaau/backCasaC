@@ -16,6 +16,7 @@ import {
 } from '../utils/scope.js';
 import { cantidadValida } from '../utils/giros.js';
 import { regresarAInventario } from '../utils/inventario.js';
+import { efectivoADevolver } from '../utils/pagos.js';
 
 export const buscarVenta = async (req, res) => {
   try {
@@ -152,21 +153,21 @@ export const crear = async (req, res) => {
       : await Caja.findOne({ where: { sucursal_id, fecha_cierre: null }, transaction: t });
     if (cajaAbierta) await validarSucursalEmpresa(req.usuario, cajaAbierta.sucursal_id);
 
-    // Una venta cobrada con terminal se reembolsa por la terminal: no sale efectivo de la caja
-    const cobradaEnEfectivo = (venta.tipo_pago || 'efectivo') === 'efectivo';
-    if (cajaAbierta && cobradaEnEfectivo) {
+    // Solo sale del cajon lo que se cobro en efectivo; lo cobrado con terminal o transferencia se regresa por ese medio
+    const efectivoSale = efectivoADevolver(venta, totalDevuelto);
+    if (cajaAbierta && efectivoSale > 0) {
       await MovimientoCaja.create({
         caja_id: cajaAbierta.caja_id,
         usuario_id,
         tipo_movimiento: 'DEVOLUCION',
-        monto: totalDevuelto,
+        monto: efectivoSale,
         concepto: `Devolución de venta ${folio_venta}${motivo ? ': ' + motivo : ''}`,
         fecha: new Date()
       }, { transaction: t });
     }
 
     await t.commit();
-    res.json({ ok: true, devolucion_id: dev.devolucion_id, total_devuelto: totalDevuelto });
+    res.json({ ok: true, devolucion_id: dev.devolucion_id, total_devuelto: totalDevuelto, efectivo_devuelto: cajaAbierta ? efectivoSale : 0 });
   } catch (e) {
     await t.rollback();
     responderErrorScope(res, e);

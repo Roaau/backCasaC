@@ -18,7 +18,12 @@ const Venta = sequelize.define("Venta", {
   direccion_entrega: { type: DataTypes.STRING(500), allowNull: true },
   referencia_entrega: { type: DataTypes.STRING(500), allowNull: true },
   estado_pedido: { type: DataTypes.STRING(20), allowNull: true },
-  saldo_pendiente: { type: DataTypes.DECIMAL(10, 2), defaultValue: 0 }
+  saldo_pendiente: { type: DataTypes.DECIMAL(10, 2), defaultValue: 0 },
+  // Cuanto se cobro de cada forma (ventas nuevas). tipo_pago = efectivo | tarjeta | transferencia | mixto
+  monto_efectivo:      { type: DataTypes.DECIMAL(10, 2), allowNull: true },
+  monto_tarjeta:       { type: DataTypes.DECIMAL(10, 2), allowNull: true },
+  monto_transferencia: { type: DataTypes.DECIMAL(10, 2), allowNull: true },
+  referencia_pago:     { type: DataTypes.STRING(60), allowNull: true }
 }, { tableName: "ventas", timestamps: false });
 
 export default Venta;

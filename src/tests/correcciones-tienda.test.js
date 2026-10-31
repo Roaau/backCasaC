@@ -34,8 +34,8 @@ describe('Ventas de hoy', () => {
     jest.clearAllMocks();
     Sucursal.findOne.mockResolvedValue({ sucursal_id: 5, empresa_id: 10, activa: true });
     db.query.mockResolvedValue([
-      { venta_id: 1, total: '40.00', tipo_pago: 'efectivo', usuario_id: 7, nombre_cajero: 'Pedro' },
-      { venta_id: 2, total: '60.50', tipo_pago: 'tarjeta', usuario_id: 7, nombre_cajero: 'Pedro' },
+      { venta_id: 1, total: '40.00', tipo_pago: 'efectivo', monto_efectivo: '40.00', monto_tarjeta: '0', monto_transferencia: '0', usuario_id: 7, nombre_cajero: 'Pedro' },
+      { venta_id: 2, total: '60.50', tipo_pago: 'tarjeta', monto_efectivo: '0', monto_tarjeta: '60.50', monto_transferencia: '0', usuario_id: 7, nombre_cajero: 'Pedro' },
     ]);
   });
 
@@ -48,7 +48,7 @@ describe('Ventas de hoy', () => {
     expect(opciones.replacements).toEqual(expect.objectContaining({ usuario_id: 7, sucursal_id: 5 }));
     expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
       solo_mias: true,
-      resumen: { total: 100.5, conteo: 2, efectivo: 40, terminal: 60.5 },
+      resumen: { total: 100.5, conteo: 2, efectivo: 40, terminal: 60.5, transferencia: 0 },
       por_cajero: [expect.objectContaining({ nombre: 'Pedro', ventas: 2, total: 100.5 })]
     }));
   });
