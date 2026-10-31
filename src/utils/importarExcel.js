@@ -5,19 +5,22 @@ import XLSX from "xlsx";
 // y tolera filas de titulo antes de los encabezados.
 
 // Orden = prioridad: si un Excel trae "codigo" y "sku", gana el primero de la lista.
+// Incluye los encabezados que exportan otros POS comunes: Eleventa, SICAR, MyBusiness/Abarrotes PDV,
+// Loyverse, Square y Shopify. Un alias que termina en "*" acepta cualquier final
+// (ej. Loyverse exporta "In stock [Mi tienda]").
 const ALIAS = {
-  codigo_barras:   ["codigo_barras", "codigo_de_barras", "cod_barras", "codigobarras", "barcode", "ean", "upc", "codigo", "cod", "sku", "clave_producto", "codigo_producto", "clave"],
-  nombre:          ["nombre", "nombre_producto", "producto", "articulo", "nombre_articulo", "item"],
+  codigo_barras:   ["codigo_barras", "codigo_de_barras", "cod_barras", "codigobarras", "barcode", "variant_barcode", "ean", "upc", "codigo", "cod", "sku", "variant_sku", "clave_producto", "codigo_producto", "clave", "clave_alterna"],
+  nombre:          ["nombre", "nombre_producto", "producto", "articulo", "nombre_articulo", "item", "name", "item_name", "title"],
   descripcion:     ["descripcion", "detalle", "descripcion_larga", "notas"],
-  categoria:       ["categoria", "departamento", "familia", "linea", "grupo", "rubro", "seccion"],
-  precio_menudeo:  ["precio_menudeo", "precio", "precio_venta", "precio_publico", "pvp", "precio_unitario", "venta", "menudeo", "precio_de_venta"],
-  precio_mayoreo:  ["precio_mayoreo", "mayoreo", "precio_mayorista", "precio_de_mayoreo"],
+  categoria:       ["categoria", "departamento", "familia", "linea", "grupo", "rubro", "seccion", "category", "product_category", "type"],
+  precio_menudeo:  ["precio_menudeo", "precio", "precio_venta", "precio_publico", "pvp", "precio_unitario", "venta", "menudeo", "precio_de_venta", "precio_1", "precio1", "price", "variant_price", "default_price", "price_*"],
+  precio_mayoreo:  ["precio_mayoreo", "mayoreo", "precio_mayorista", "precio_de_mayoreo", "precio_2", "precio2"],
   precio_oferta:   ["precio_oferta", "oferta", "promocion", "precio_promocion"],
-  precio_compra:   ["precio_compra", "costo", "costo_unitario", "precio_costo", "costo_compra", "precio_de_compra"],
-  stock_actual:    ["stock_actual", "stock", "existencia", "existencias", "inventario", "cantidad", "piezas", "inventario_actual"],
-  stock_minimo:    ["stock_minimo", "minimo", "existencia_minima", "inventario_minimo", "punto_de_reorden", "reorden"],
+  precio_compra:   ["precio_compra", "costo", "costo_unitario", "precio_costo", "costo_compra", "precio_de_compra", "cost", "cost_per_item", "default_cost"],
+  stock_actual:    ["stock_actual", "stock", "existencia", "existencias", "inventario", "cantidad", "piezas", "inventario_actual", "in_stock", "in_stock_*", "variant_inventory_qty", "quantity", "qty", "current_quantity_*"],
+  stock_minimo:    ["stock_minimo", "minimo", "existencia_minima", "inventario_minimo", "inv_minimo", "punto_de_reorden", "reorden", "low_stock", "low_stock_*", "stock_alert_*"],
   minimo_mayoreo:  ["minimo_mayoreo", "cantidad_mayoreo", "mayoreo_desde", "piezas_mayoreo"],
-  unidad_venta:    ["unidad_venta", "unidad", "unidad_medida", "um", "u_m", "unidad_de_medida"],
+  unidad_venta:    ["unidad_venta", "unidad", "unidad_medida", "um", "u_m", "unidad_de_medida", "tipo_de_venta", "se_vende_por", "sold_by_weight"],
   marca:           ["marca", "laboratorio", "fabricante", "proveedor_marca"],
   modelo:          ["modelo", "estilo", "referencia"],
   talla:           ["talla", "medida", "tamano", "size"],
@@ -45,7 +48,8 @@ export const mapearEncabezados = (encabezados) => {
   const mapa = {};
   for (const [campo, alias] of Object.entries(ALIAS)) {
     for (const a of alias) {
-      const idx = normalizados.findIndex((h, i) => h === a && !usados.has(i));
+      const prefijo = a.endsWith("*") ? a.slice(0, -1) : null;
+      const idx = normalizados.findIndex((h, i) => !usados.has(i) && (prefijo ? h.startsWith(prefijo) : h === a));
       if (idx >= 0) {
         mapa[campo] = idx;
         usados.add(idx);
@@ -77,6 +81,8 @@ export const parsearUnidad = (valor) => {
   if (["l", "lt", "lts", "litro", "litros", "ltr"].includes(u)) return "litro";
   if (["m", "mt", "mts", "metro", "metros", "mtr"].includes(u)) return "metro";
   if (["bulto", "bultos", "costal", "costales", "saco", "sacos"].includes(u)) return "bulto";
+  // Eleventa: "Granel" = se vende por kilo; Loyverse: "Sold by weight" = Y
+  if (["granel", "a_granel", "peso", "y", "yes", "si", "true"].includes(u)) return "kg";
   return "pieza";
 };
 

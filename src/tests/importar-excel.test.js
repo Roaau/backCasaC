@@ -18,6 +18,27 @@ describe('Importador de Excel - encabezados flexibles', () => {
     }));
   });
 
+  test('reconoce el Excel que exporta Eleventa', () => {
+    const { mapa } = mapearEncabezados(['Código', 'Descripción', 'Tipo de Venta', 'Precio Costo', 'Precio Venta', 'Precio Mayoreo', 'Departamento', 'Existencia', 'Inv. Mínimo']);
+    expect(mapa).toEqual(expect.objectContaining({
+      codigo_barras: 0, nombre: 1, unidad_venta: 2, precio_compra: 3, precio_menudeo: 4, precio_mayoreo: 5, categoria: 6, stock_actual: 7, stock_minimo: 8
+    }));
+    expect(parsearUnidad('Granel')).toBe('kg');
+    expect(parsearUnidad('Unidad')).toBe('pieza');
+  });
+
+  test('reconoce SICAR (Precio 1 / Precio 2) y Loyverse (columnas por tienda)', () => {
+    const sicar = mapearEncabezados(['Clave', 'Descripción', 'Unidad', 'Precio 1', 'Precio 2', 'Costo', 'Existencia', 'Mínimo']).mapa;
+    expect(sicar).toEqual(expect.objectContaining({ codigo_barras: 0, nombre: 1, unidad_venta: 2, precio_menudeo: 3, precio_mayoreo: 4, precio_compra: 5, stock_actual: 6, stock_minimo: 7 }));
+    const loyverse = mapearEncabezados(['Handle', 'SKU', 'Name', 'Category', 'Sold by weight', 'Cost', 'Barcode', 'Price [Mi tienda]', 'In stock [Mi tienda]', 'Low stock [Mi tienda]']).mapa;
+    expect(loyverse).toEqual(expect.objectContaining({ nombre: 2, categoria: 3, unidad_venta: 4, precio_compra: 5, codigo_barras: 6, stock_actual: 8, stock_minimo: 9 }));
+  });
+
+  test('reconoce Shopify', () => {
+    const { mapa } = mapearEncabezados(['Handle', 'Title', 'Type', 'Variant SKU', 'Variant Price', 'Variant Barcode', 'Variant Inventory Qty', 'Cost per item']);
+    expect(mapa).toEqual(expect.objectContaining({ nombre: 1, categoria: 2, precio_menudeo: 4, codigo_barras: 5, stock_actual: 6, precio_compra: 7 }));
+  });
+
   test('usa Descripcion como nombre cuando no hay columna de nombre', () => {
     const { mapa } = mapearEncabezados(['Clave', 'Descripción', 'Precio']);
     expect(mapa.nombre).toBe(1);
