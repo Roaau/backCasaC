@@ -15,4 +15,13 @@ export async function datosDePago() {
   return { banco: valor('pago_banco'), clabe: valor('pago_clabe'), titular: valor('pago_titular') };
 }
 
+// Contacto de soporte que ven los clientes en la pagina "Ayuda y soporte"
+export const CLAVES_SOPORTE = ['soporte_whatsapp', 'soporte_email', 'soporte_horario'];
+
+export async function datosDeSoporte() {
+  const filas = await PlataformaConfig.findAll({ where: { clave: CLAVES_SOPORTE } });
+  const valor = (clave) => filas.find(f => f.clave === clave)?.valor || null;
+  return { whatsapp: valor('soporte_whatsapp'), email: valor('soporte_email'), horario: valor('soporte_horario') };
+}
+
 export default PlataformaConfig;

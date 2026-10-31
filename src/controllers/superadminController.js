@@ -17,7 +17,7 @@ import { cotizar, sumarAFecha, DIAS_PRUEBA, DIAS_BONO_REFERIDO } from "../utils/
 import { fechaLocalISO } from "../utils/fechas.js";
 import SolicitudPlan from "../models/SolicitudPlan.js";
 import PagoEmpresa from "../models/PagoEmpresa.js";
-import PlataformaConfig, { CLAVES_PAGO, datosDePago } from "../models/PlataformaConfig.js";
+import PlataformaConfig, { CLAVES_PAGO, datosDePago, CLAVES_SOPORTE, datosDeSoporte } from "../models/PlataformaConfig.js";
 import { montoPorPeriodo } from "./planClienteController.js";
 import { notificarSolicitudResuelta } from "../services/emailService.js";
 
@@ -601,7 +601,7 @@ export const rechazarSolicitud = async (req, res) => {
 // GET/PUT /api/superadmin/config-pagos — datos para transferir que ven los clientes en Tu plan
 export const getConfigPagos = async (req, res) => {
   try {
-    res.json(await datosDePago());
+    res.json({ ...(await datosDePago()), soporte: await datosDeSoporte() });
   } catch (e) {
     res.status(500).json({ error: 'Error al leer los datos de pago' });
   }
@@ -618,8 +618,18 @@ export const actualizarConfigPagos = async (req, res) => {
       const valor = valores[clave] === null ? null : String(valores[clave]).replace(clave === 'pago_clabe' ? /\s/g : /^\s+|\s+$/g, '').slice(0, 120) || null;
       await PlataformaConfig.upsert({ clave, valor });
     }
-    await registrarAuditoria(req, { accion: 'SUPERADMIN_CONFIG_PAGOS', entidad: 'plataforma_config', detalle: await datosDePago() });
-    res.json({ mensaje: 'Datos de pago guardados', ...(await datosDePago()) });
+    // Contacto de soporte (opcional en el mismo formulario)
+    const soporte = req.body?.soporte;
+    if (soporte && typeof soporte === 'object') {
+      const whatsapp = soporte.whatsapp == null ? null : String(soporte.whatsapp).replace(/[^\d+]/g, '').slice(0, 20) || null;
+      const email = soporte.email == null ? null : String(soporte.email).trim().slice(0, 120) || null;
+      if (email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return res.status(400).json({ error: 'El correo de soporte no es válido' });
+      const horario = soporte.horario == null ? null : String(soporte.horario).trim().slice(0, 120) || null;
+      const nuevos = { soporte_whatsapp: whatsapp, soporte_email: email, soporte_horario: horario };
+      for (const clave of CLAVES_SOPORTE) await PlataformaConfig.upsert({ clave, valor: nuevos[clave] });
+    }
+    await registrarAuditoria(req, { accion: 'SUPERADMIN_CONFIG_PAGOS', entidad: 'plataforma_config', detalle: { ...(await datosDePago()), soporte: await datosDeSoporte() } });
+    res.json({ mensaje: 'Datos guardados', ...(await datosDePago()), soporte: await datosDeSoporte() });
   } catch (e) {
     res.status(500).json({ error: 'Error al guardar los datos de pago', detalle: e.message });
   }

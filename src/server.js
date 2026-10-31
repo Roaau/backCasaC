@@ -55,6 +55,7 @@ import cron from "node-cron";
 import { realizarBackup } from "./backup.js";
 import { cfdiHabilitado } from "./config/features.js";
 import { registrarErroresServidor, registrarUso } from "./controllers/saludController.js";
+import { datosDeSoporte } from "./models/PlataformaConfig.js";
 import { correrResumenSemanal, correrAlertasInventario } from "./services/correosAutomaticos.js";
 
 import "./models/CajaModel.js";
@@ -320,6 +321,14 @@ const responderHealth = async (req, res) => {
 
 app.get("/api/health", responderHealth);
 app.get("/api/health/deep", responderHealth);
+// Contacto de soporte (publico: se muestra tambien en login y en la pagina de ayuda)
+app.get("/api/soporte", async (req, res) => {
+  try {
+    res.json(await datosDeSoporte());
+  } catch {
+    res.json({ whatsapp: null, email: null, horario: null });
+  }
+});
 app.use("/api", apiLimit);
 app.use("/api", registrarErroresServidor);
 app.use("/api/auth/login",               loginLimit);
