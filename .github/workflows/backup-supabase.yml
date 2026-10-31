@@ -1,4 +1,4 @@
-﻿name: Backup Supabase Database
+name: Backup Supabase Database
 
 on:
   workflow_dispatch:
@@ -28,7 +28,7 @@ jobs:
           pg_dump "$DATABASE_URL" --no-owner --no-privileges -f "backups/supabase-$TS.sql"
 
       - name: Upload backup artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: supabase-backup-${{ github.run_id }}
           path: backups/*.sql
