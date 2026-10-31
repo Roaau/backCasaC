@@ -1,0 +1,20 @@
+# Revisa cada semana las librerías y abre un PR cuando hay una versión con arreglos de seguridad.
+# Los PR corren las pruebas de pruebas.yml; nada se publica hasta que se acepta el PR.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "07:00"
+      timezone: America/Mexico_City
+    open-pull-requests-limit: 5
+    groups:
+      menores:
+        update-types: [minor, patch]
+    labels: [dependencias]
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
