@@ -24,6 +24,18 @@ import { normalizarCobro, efectivoADevolver, montosDeVenta, sqlEfectivo, sqlTarj
 
 const esCajaDeHoy = (caja) => esMismoDiaLocal(caja.fecha_apertura);
 
+// Ventas hechas sin internet: se suben despues con su id_local (no se duplican) y la hora real de la venta.
+// Una venta offline ya ocurrio en el mostrador: no se rechaza por precio distinto, stock o caja; se registra y se avisa.
+const ID_LOCAL = /^[A-Za-z0-9-]{8,40}$/;
+const fechaOfflineValida = (valor) => {
+  const fecha = valor ? new Date(valor) : null;
+  if (!fecha || Number.isNaN(fecha.getTime())) return null;
+  const ahora = Date.now();
+  if (fecha.getTime() > ahora + 5 * 60000) return null;            // no en el futuro
+  if (fecha.getTime() < ahora - 7 * 24 * 3600000) return null;     // maximo una semana atras
+  return fecha;
+};
+
 export const crearVenta = async (req, res) => {
   const t = await sequelize.transaction();
   try {
@@ -36,6 +48,20 @@ export const crearVenta = async (req, res) => {
     const usuario_id = req.usuario.id;
     const datos_cfdi = cfdiHabilitado() ? req.body.datos_cfdi : null;
     const sucursal_id = await resolverSucursalOperativa(req);
+
+    const idLocal = ID_LOCAL.test(String(req.body.id_local || '')) ? String(req.body.id_local) : null;
+    const offline = req.body.offline === true && !!idLocal;
+    const fechaVenta = offline ? (fechaOfflineValida(req.body.fecha_local) || new Date()) : new Date();
+    const avisosOffline = [];
+
+    // Si esta venta ya se subio (reintento), se regresa la misma sin duplicarla
+    if (idLocal) {
+      const yaSubida = await Venta.findOne({ where: { id_local: idLocal, sucursal_id }, transaction: t });
+      if (yaSubida) {
+        await t.rollback();
+        return res.json({ msg: "Venta ya registrada", folio: yaSubida.folio, venta_id: yaSubida.venta_id, total: Number(yaSubida.total), duplicada: true });
+      }
+    }
 
     if (!["Tienda", "Pedido"].includes(tipo_venta)) throw new Error("tipo_venta debe ser 'Tienda' o 'Pedido'.");
     if (tipo_venta === "Pedido" && !pedido_numero?.trim()) throw new Error("El numero de pedido es obligatorio.");
@@ -50,12 +76,13 @@ export const crearVenta = async (req, res) => {
       where: { fecha_cierre: null, sucursal_id },
       transaction: t
     });
-    if (!cajaAbierta) {
+    if (!cajaAbierta && !offline) {
       const error = new Error("No hay caja abierta para esta sucursal. Abre caja antes de vender.");
       error.status = 409;
       throw error;
     }
-    if (!esCajaDeHoy(cajaAbierta)) {
+    if (!cajaAbierta) avisosOffline.push("Se subió cuando no había caja abierta");
+    if (cajaAbierta && !offline && !esCajaDeHoy(cajaAbierta)) {
       const error = new Error("Hay una caja abierta de un dia anterior. Cierrala en Corte de caja antes de vender.");
       error.status = 409;
       error.requiere_cierre = true;
@@ -69,6 +96,8 @@ export const crearVenta = async (req, res) => {
       tipo_venta,
       pedido_numero,
       sucursal_id,
+      fecha: fechaVenta,
+      id_local: idLocal,
       forma_pago: forma_pago || null,
       tipo_pago: tipo_pago || "efectivo",
       descuento_porcentaje: descuento_porcentaje || 0,
@@ -97,12 +126,23 @@ export const crearVenta = async (req, res) => {
         throw new Error(`Cantidad invalida para ${prod.nombre}: se vende por ${prod.unidad_venta || "pieza"}.`);
       }
       if (prod.fecha_caducidad && prod.fecha_caducidad < fechaLocalISO()) {
-        const error = new Error(`${prod.nombre} esta caducado (${prod.fecha_caducidad}). No se puede vender.`);
-        error.status = 409;
-        throw error;
+        if (!offline) {
+          const error = new Error(`${prod.nombre} esta caducado (${prod.fecha_caducidad}). No se puede vender.`);
+          error.status = 409;
+          throw error;
+        }
+        avisosOffline.push(`${prod.nombre} estaba caducado (${prod.fecha_caducidad})`);
       }
 
-      const linea = validarLineaVenta(prod, cantidadSolicitada, precioUnitario);
+      let linea;
+      try {
+        linea = validarLineaVenta(prod, cantidadSolicitada, precioUnitario);
+      } catch (errPrecio) {
+        if (!offline) throw errPrecio;
+        // Sin internet se cobro con el precio que tenia la caja en ese momento
+        linea = { precio_unitario: precioUnitario, subtotal: Math.round(precioUnitario * cantidadSolicitada * 100) / 100 };
+        avisosOffline.push(`${prod.nombre}: se cobró a $${precioUnitario.toFixed(2)} (precio actual distinto)`);
+      }
       subtotalServidor += linea.subtotal;
 
       // lock: evita que dos cajas vendan la misma ultima pieza al mismo tiempo
@@ -122,7 +162,9 @@ export const crearVenta = async (req, res) => {
       }
 
       if (Number(stockReg.stock_actual) < cantidadSolicitada) {
-        throw new Error(`Stock insuficiente en ${prod.nombre}. Disponible: ${stockReg.stock_actual}`);
+        if (!offline) throw new Error(`Stock insuficiente en ${prod.nombre}. Disponible: ${stockReg.stock_actual}`);
+        // La mercancia ya salio: la existencia queda negativa y se avisa para corregir el inventario
+        avisosOffline.push(`${prod.nombre} quedó con existencia negativa (${Number(stockReg.stock_actual) - cantidadSolicitada})`);
       }
 
       await DetalleVenta.create({
@@ -153,7 +195,7 @@ export const crearVenta = async (req, res) => {
         stock_anterior: stockAnterior,
         stock_nuevo: stockNuevo,
         observaciones: `Venta ${folio}`,
-        fecha: new Date()
+        fecha: fechaVenta
       }, { transaction: t });
     }
 
@@ -227,8 +269,19 @@ export const crearVenta = async (req, res) => {
       transaction: t
     });
 
+    if (offline) {
+      await registrarAuditoria(req, {
+        accion: "VENTA_OFFLINE",
+        entidad: "ventas",
+        entidad_id: nuevaVenta.venta_id,
+        sucursal_id,
+        detalle: { folio, total: totalServidor, fecha_venta: fechaVenta, avisos: avisosOffline },
+        transaction: t
+      });
+    }
+
     await t.commit();
-    res.json({ msg: "Venta registrada", folio, venta_id: nuevaVenta.venta_id, total: totalServidor });
+    res.json({ msg: "Venta registrada", folio, venta_id: nuevaVenta.venta_id, total: totalServidor, ...(offline ? { avisos: avisosOffline } : {}) });
   } catch (error) {
     await t.rollback();
     responderErrorScope(res, error);

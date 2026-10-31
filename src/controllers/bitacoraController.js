@@ -6,6 +6,7 @@ import { obtenerEmpresaId, responderErrorScope } from '../utils/scope.js';
 // Acciones que ve el dueño en su bitacora (las internas de IA/notificaciones no se muestran)
 export const ACCIONES_BITACORA = {
   VENTA_CREAR: 'Venta',
+  VENTA_OFFLINE: 'Venta sin internet (subida después)',
   PEDIDO_ESTADO: 'Pedido cambió de estado',
   DEVOLUCION: 'Devolución',
   PRODUCTO_CREAR: 'Producto nuevo',

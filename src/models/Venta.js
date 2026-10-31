@@ -23,7 +23,9 @@ const Venta = sequelize.define("Venta", {
   monto_efectivo:      { type: DataTypes.DECIMAL(10, 2), allowNull: true },
   monto_tarjeta:       { type: DataTypes.DECIMAL(10, 2), allowNull: true },
   monto_transferencia: { type: DataTypes.DECIMAL(10, 2), allowNull: true },
-  referencia_pago:     { type: DataTypes.STRING(60), allowNull: true }
+  referencia_pago:     { type: DataTypes.STRING(60), allowNull: true },
+  // Ventas hechas sin internet: id generado en la caja para no duplicarlas al subirlas
+  id_local:            { type: DataTypes.STRING(40), allowNull: true }
 }, { tableName: "ventas", timestamps: false });
 
 export default Venta;

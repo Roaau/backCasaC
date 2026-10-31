@@ -417,7 +417,10 @@ try {
       ruta VARCHAR(80) NOT NULL, visitas INTEGER NOT NULL DEFAULT 1,
       PRIMARY KEY (fecha, empresa_id, usuario_id, ruta))`,
     "ALTER TABLE errores_servidor ENABLE ROW LEVEL SECURITY",
-    "ALTER TABLE uso_pantallas ENABLE ROW LEVEL SECURITY"
+    "ALTER TABLE uso_pantallas ENABLE ROW LEVEL SECURITY",
+    // Ventas sin internet (migracion 20261031030000)
+    "ALTER TABLE ventas ADD COLUMN IF NOT EXISTS id_local VARCHAR(40) NULL",
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_ventas_id_local ON ventas (sucursal_id, id_local) WHERE id_local IS NOT NULL"
   ]) {
     await sequelize.query(sql).catch(err => console.error("Columna nueva:", err.message));
   }
