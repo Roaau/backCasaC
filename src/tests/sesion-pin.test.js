@@ -142,3 +142,24 @@ describe('requierePin - PIN de autorizacion del dueno', () => {
     for (let i = 0; i < 50; i++) expect(generarPin()).toMatch(/^\d{6}$/);
   });
 });
+
+describe('Sesion en cookie (dominio propio)', () => {
+  const { usaCookie, leerCookie, tokenDeLaPeticion } = require('../utils/sesionCookie.js');
+  const antes = process.env.COOKIE_DOMAIN;
+  afterAll(() => { process.env.COOKIE_DOMAIN = antes; });
+
+  test('solo usa cookie si COOKIE_DOMAIN esta definido y la peticion viene de ese dominio', () => {
+    delete process.env.COOKIE_DOMAIN;
+    expect(usaCookie({ headers: { origin: 'https://app.kairuma.dev' } })).toBe(false);
+    process.env.COOKIE_DOMAIN = 'kairuma.dev';
+    expect(usaCookie({ headers: { origin: 'https://app.kairuma.dev' } })).toBe(true);
+    expect(usaCookie({ headers: { origin: 'https://sc-gamma-flame.vercel.app' } })).toBe(false);
+    expect(usaCookie({ headers: { origin: 'https://kairuma.dev.evil.com' } })).toBe(false);
+  });
+
+  test('lee el token del header o de la cookie', () => {
+    expect(tokenDeLaPeticion({ headers: { authorization: 'Bearer abc' } })).toBe('abc');
+    expect(tokenDeLaPeticion({ headers: { cookie: 'otra=1; scpos_sesion=xyz.123' } })).toBe('xyz.123');
+    expect(leerCookie('a=1')).toBeNull();
+  });
+});

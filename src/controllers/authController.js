@@ -14,6 +14,7 @@ import { validarLimiteUsuarios } from "../utils/planLimits.js";
 import { normalizarGiro } from "../utils/giros.js";
 import { cotizar } from "../utils/planes.js";
 import { limpiarCacheSesion } from "../middleware/authMiddleware.js";
+import { usaCookie, ponerCookieSesion, borrarCookieSesion } from "../utils/sesionCookie.js";
 
 const generarCodigo = () =>
   'INV-' + crypto.randomBytes(3).toString('hex').toUpperCase();
@@ -116,9 +117,15 @@ export const login = async (req, res) => {
       ? await Empresa.findByPk(user.empresa_id, { attributes: ['logo_empresa', 'razon_social', 'giro', 'iva_activo', 'iva_porcentaje'] })
       : null;
 
+    // En el dominio propio la sesion va en cookie httpOnly y el navegador no recibe el token
+    const enCookie = usaCookie(req);
+    if (enCookie) ponerCookieSesion(res, token);
+
     return res.json({
       mensaje:           "Login correcto",
-      token,
+      token:             enCookie ? null : token,
+      sesion_en_cookie:  enCookie,
+      sesion_expira:     Date.now() + 8 * 60 * 60 * 1000,
       usuario_id:        user.usuario_id,
       usuario:           user.usuario,
       nombre:            user.nombre,
@@ -532,8 +539,16 @@ export const cerrarTodasLasSesiones = async (req, res) => {
   try {
     await Usuario.increment('sesion_version', { by: 1, where: { usuario_id: req.usuario.id } });
     limpiarCacheSesion(req.usuario.id);
+    borrarCookieSesion(res);
     return res.json({ mensaje: "Se cerró la sesión en todos los aparatos." });
   } catch (error) {
     return res.status(500).json({ mensaje: "No se pudo cerrar las sesiones" });
   }
+};
+
+// ── POST /api/auth/logout ────────────────────────────────────────────────────
+// Borra la cookie de sesion (dominio propio). Con token en header no hay nada que borrar en el servidor.
+export const cerrarSesion = (req, res) => {
+  borrarCookieSesion(res);
+  return res.json({ mensaje: "Sesión cerrada" });
 };

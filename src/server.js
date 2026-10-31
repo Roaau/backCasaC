@@ -57,6 +57,7 @@ import { realizarBackup } from "./backup.js";
 import { cfdiHabilitado } from "./config/features.js";
 import { registrarErroresServidor, registrarUso } from "./controllers/saludController.js";
 import { datosDeSoporte } from "./models/PlataformaConfig.js";
+import { leerCookie } from "./utils/sesionCookie.js";
 import { correrResumenSemanal, correrAlertasInventario } from "./services/correosAutomaticos.js";
 
 import "./models/CajaModel.js";
@@ -115,7 +116,8 @@ Sucursal.hasMany(MovimientoInventario, { foreignKey: 'sucursal_id' });
 
 const app = express();
 app.set('trust proxy', 1);
-const defaultFrontendOrigins = ['https://sc-gamma-flame.vercel.app'];
+// Dominio propio: https://app.kairuma.dev y https://kairuma.dev (sesion en cookie httpOnly, ver utils/sesionCookie.js)
+const defaultFrontendOrigins = ['https://sc-gamma-flame.vercel.app', 'https://app.kairuma.dev', 'https://kairuma.dev', 'https://www.kairuma.dev'];
 const allowedOrigins = [...new Set([
   ...defaultFrontendOrigins,
   ...(process.env.FRONTEND_URL || '')
@@ -198,7 +200,8 @@ const io = new Server(server, {
 
 // Middleware Socket.io: verifica JWT si viene; permite conexiones sin token para escaner movil
 io.use((socket, next) => {
-  const token = socket.handshake.auth?.token;
+  // Token del handshake (dominios viejos) o cookie de sesion (dominio propio)
+  const token = socket.handshake.auth?.token || leerCookie(socket.handshake.headers?.cookie);
   if (token) {
     try {
       socket.usuario = jwt.verify(token, process.env.JWT_SECRET);

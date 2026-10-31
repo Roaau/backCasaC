@@ -2,6 +2,7 @@ import jwt from "jsonwebtoken";
 import { QueryTypes } from "sequelize";
 import sequelize from "../config/database.js";
 import { parseIdPositivo } from "../utils/scope.js";
+import { tokenDeLaPeticion } from "../utils/sesionCookie.js";
 
 // Cache corto del estado de la sesion para no ir a la BD en cada peticion.
 // 15 s es lo maximo que tarda en salir un usuario dado de baja o un negocio suspendido.
@@ -46,11 +47,11 @@ const empresaVencida = (fechaVencimiento) => {
 // que su negocio no este suspendido/vencido y que no se hayan cerrado sus sesiones.
 // Rol, empresa y sucursal se toman de la BD: un cambio del admin aplica de inmediato.
 export const verificarToken = async (req, res, next) => {
-  const authHeader = req.headers.authorization;
-  if (!authHeader || !authHeader.startsWith("Bearer ")) {
+  // Header Authorization (dominios viejos) o cookie httpOnly (dominio propio)
+  const token = tokenDeLaPeticion(req);
+  if (!token) {
     return responderSesionInvalida(res, "Token requerido");
   }
-  const token = authHeader.slice(7);
   let payload;
   try {
     payload = jwt.verify(token, process.env.JWT_SECRET);
