@@ -1,4 +1,5 @@
 import { limpiarCacheSesion } from '../middleware/authMiddleware.js';
+import { saludSuperadmin } from '../controllers/saludController.js';
 import { Router } from 'express';
 import {
   listarEmpresas,
@@ -47,6 +48,7 @@ router.get('/config-pagos',             getConfigPagos);
 router.put('/config-pagos',             actualizarConfigPagos);
 router.put('/sucursales/:id/toggle', toggleSucursal);
 router.put('/usuarios/:id/toggle',   toggleUsuario);
+router.get('/salud', saludSuperadmin);
 router.get('/auditoria',             listarAuditoriaSuperadmin);
 
 router.get('/catalogos',        listarCatalogos);

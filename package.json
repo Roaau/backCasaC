@@ -9,7 +9,8 @@
     "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js --config jest.config.cjs",
     "db:migrate": "sequelize-cli db:migrate",
     "db:migrate:undo": "sequelize-cli db:migrate:undo:all",
-    "backup": "node scripts/backup.js"
+    "backup": "node scripts/backup.js",
+    "restaurar": "node scripts/restaurar.js"
   },
   "keywords": [],
   "author": "",

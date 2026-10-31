@@ -143,3 +143,27 @@ export const regenerarPinAutorizacion = async (req, res) => {
     return res.status(500).json({ error: 'No se pudo generar el PIN' });
   }
 };
+
+// ── Correos automaticos (solo admin) ─────────────────────────────────────────
+// GET /api/empresas/correos-automaticos -> { activo, email }
+// PUT /api/empresas/correos-automaticos { activo }
+export const getCorreosAutomaticos = async (req, res) => {
+  try {
+    const empresa = await Empresa.findByPk(req.usuario.empresa_id, { attributes: ['correos_automaticos', 'email_contacto'] });
+    if (!empresa) return res.status(404).json({ error: 'Empresa no encontrada' });
+    return res.json({ activo: empresa.correos_automaticos !== false, email: empresa.email_contacto });
+  } catch (error) {
+    return res.status(500).json({ error: 'No se pudo leer la configuracion de correos' });
+  }
+};
+
+export const setCorreosAutomaticos = async (req, res) => {
+  try {
+    const activo = req.body?.activo === true;
+    const [n] = await Empresa.update({ correos_automaticos: activo }, { where: { empresa_id: req.usuario.empresa_id } });
+    if (!n) return res.status(404).json({ error: 'Empresa no encontrada' });
+    return res.json({ activo, mensaje: activo ? 'Correos automáticos activados' : 'Correos automáticos apagados' });
+  } catch (error) {
+    return res.status(500).json({ error: 'No se pudo guardar la configuracion de correos' });
+  }
+};

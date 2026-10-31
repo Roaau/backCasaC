@@ -16,7 +16,8 @@ const Usuario = sequelize.define("Usuario", {
   // Bloqueo por contrasenas incorrectas y "cerrar sesion en todos los aparatos"
   intentos_fallidos: { type: DataTypes.INTEGER, allowNull: false, defaultValue: 0 },
   bloqueado_hasta:   { type: DataTypes.DATE, allowNull: true },
-  sesion_version:    { type: DataTypes.INTEGER, allowNull: false, defaultValue: 0 }
+  sesion_version:    { type: DataTypes.INTEGER, allowNull: false, defaultValue: 0 },
+  ultimo_acceso:     { type: DataTypes.DATE, allowNull: true }
 }, { tableName: "usuarios", timestamps: false });
 
 export default Usuario;

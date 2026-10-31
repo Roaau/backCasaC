@@ -399,3 +399,51 @@ export const notificarSolicitudResuelta = async ({ destinatario, razon_social, d
          ${motivo ? `<p style="margin:0;font-size:15px;">Motivo: ${motivo}</p>` : ''}`),
   });
 };
+
+// ── Correos automaticos al dueño: resumen semanal y alertas diarias ──────────
+const escapar = (t) => String(t ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const lista = (items) => items.length
+  ? `<ul style="margin:0 0 12px;padding-left:18px;font-size:14px;line-height:1.6;">${items.map(i => `<li>${i}</li>`).join("")}</ul>`
+  : "";
+const pieCorreos = `<p style="margin:16px 0 0;font-size:12px;color:#6b6b66;line-height:1.5;">
+  Puedes apagar estos correos en SC POS &gt; Configuración &gt; Correos automáticos.</p>`;
+
+export const enviarResumenSemanal = async ({ destinatario, razon_social, desde, hasta, ventas, semanaAnterior, top, devoluciones, agotados, porCaducar }) => {
+  if (!process.env.BREVO_API_KEY) return;
+  const cambio = semanaAnterior.total > 0 ? Math.round(((ventas.total - semanaAnterior.total) / semanaAnterior.total) * 100) : null;
+  const flecha = cambio === null ? "" : cambio >= 0 ? ` (▲ ${cambio}% vs semana anterior)` : ` (▼ ${Math.abs(cambio)}% vs semana anterior)`;
+  await enviarBrevo({
+    to: destinatario,
+    subject: `Resumen semanal de ${razon_social}: ${pesos(ventas.total)} en ventas`,
+    html: correoSimple(`Tu semana del ${desde} al ${hasta}`, `
+      <p style="margin:0 0 12px;font-size:15px;line-height:1.5;">
+        Vendiste <strong>${pesos(ventas.total)}</strong> en <strong>${ventas.conteo}</strong> ventas${flecha}.
+        Ticket promedio: ${pesos(ventas.conteo ? ventas.total / ventas.conteo : 0)}.
+      </p>
+      ${top.length ? `<p style="margin:0 0 4px;font-size:14px;font-weight:600;">Lo más vendido</p>${lista(top.map(t => `${escapar(t.nombre)}: ${Number(t.cantidad)}`))}` : ""}
+      <p style="margin:0 0 12px;font-size:14px;line-height:1.5;">
+        Devoluciones: <strong>${devoluciones.conteo}</strong> (${pesos(devoluciones.total)}) ·
+        Agotados: <strong>${agotados}</strong> · Por caducar en 30 días: <strong>${porCaducar}</strong>
+      </p>
+      ${pieCorreos}`)
+  });
+};
+
+export const enviarAlertasInventario = async ({ destinatario, razon_social, agotados, caducan }) => {
+  if (!process.env.BREVO_API_KEY) return;
+  const partes = [];
+  if (agotados.length) {
+    partes.push(`<p style="margin:0 0 4px;font-size:14px;font-weight:600;">Se agotaron (${agotados.length})</p>` +
+      lista(agotados.slice(0, 20).map(a => `${escapar(a.nombre)} — ${escapar(a.sucursal)}`)) +
+      (agotados.length > 20 ? `<p style="margin:0 0 12px;font-size:13px;color:#6b6b66;">y ${agotados.length - 20} más.</p>` : ""));
+  }
+  if (caducan.length) {
+    partes.push(`<p style="margin:0 0 4px;font-size:14px;font-weight:600;">Caducan en los próximos 7 días (${caducan.length})</p>` +
+      lista(caducan.slice(0, 20).map(c => `${escapar(c.nombre)}: ${c.fecha_caducidad}`)));
+  }
+  await enviarBrevo({
+    to: destinatario,
+    subject: `${razon_social}: ${agotados.length ? `${agotados.length} agotados` : ""}${agotados.length && caducan.length ? " y " : ""}${caducan.length ? `${caducan.length} por caducar` : ""}`,
+    html: correoSimple("Revisa tu inventario", partes.join("") + pieCorreos)
+  });
+};

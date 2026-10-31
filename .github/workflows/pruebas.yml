@@ -1,0 +1,30 @@
+name: Pruebas backend
+
+# Corre las pruebas en cada push y pull request.
+# Para no publicar si fallan: en Render > backCasaC > Settings > Build & Deploy,
+# cambia "Auto-Deploy" a "After CI Checks Pass".
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  pruebas:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Revisar sintaxis
+        run: for f in $(git ls-files 'src/*.js' 'scripts/*.js' '*.js'); do node --check "$f" || exit 1; done
+      - name: Pruebas
+        run: npm test -- --ci
+        env:
+          JWT_SECRET: secreto-solo-para-ci
+          NODE_ENV: test

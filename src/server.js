@@ -54,6 +54,8 @@ import notificacionesRoutes from "./routes/notificacionesRoutes.js";
 import cron from "node-cron";
 import { realizarBackup } from "./backup.js";
 import { cfdiHabilitado } from "./config/features.js";
+import { registrarErroresServidor, registrarUso } from "./controllers/saludController.js";
+import { correrResumenSemanal, correrAlertasInventario } from "./services/correosAutomaticos.js";
 
 import "./models/CajaModel.js";
 import "./models/MovimientoCaja.js";
@@ -258,6 +260,15 @@ cron.schedule('0 9 * * *', async () => {
   }
 }, { timezone: 'America/Mexico_City' });
 
+// Correos al dueño: resumen semanal los lunes 8:10 y alertas de agotados/caducidad diario 7:40 (hora MX).
+// Se pueden apagar por negocio en Configuracion (empresas.correos_automaticos).
+cron.schedule('10 8 * * 1', () => {
+  correrResumenSemanal().catch(err => console.error('[Resumen semanal]', err.message));
+}, { timezone: 'America/Mexico_City' });
+cron.schedule('40 7 * * *', () => {
+  correrAlertasInventario().catch(err => console.error('[Alertas inventario]', err.message));
+}, { timezone: 'America/Mexico_City' });
+
 // Cron: verificar stock bajo cada 30 min y notificar via socket
 cron.schedule('*/30 * * * *', async () => {
   try {
@@ -310,6 +321,7 @@ const responderHealth = async (req, res) => {
 app.get("/api/health", responderHealth);
 app.get("/api/health/deep", responderHealth);
 app.use("/api", apiLimit);
+app.use("/api", registrarErroresServidor);
 app.use("/api/auth/login",               loginLimit);
 app.use("/api/auth/solicitar-registro", otpLimit);
 app.use("/api/auth/solicitar-reset",    otpLimit);
@@ -342,6 +354,7 @@ app.use("/api/ia",           verificarToken, iaRoutes);
 app.use("/api/cotizaciones", verificarToken, cotizacionesRoutes);
 app.use("/api/onboarding",  verificarToken, onboardingRoutes);
 app.use("/api/notificaciones", verificarToken, notificacionesRoutes);
+app.post("/api/uso", verificarToken, registrarUso);
 app.use("/api/superadmin",   verificarToken, verificarSuperAdmin, superadminRoutes);
 
 app.get("/api", (req, res) => res.json({ mensaje: "Servidor arriba" }));
@@ -382,7 +395,20 @@ try {
     "ALTER TABLE ventas ADD COLUMN IF NOT EXISTS monto_tarjeta DECIMAL(10,2) NULL",
     "ALTER TABLE ventas ADD COLUMN IF NOT EXISTS monto_transferencia DECIMAL(10,2) NULL",
     "ALTER TABLE ventas ADD COLUMN IF NOT EXISTS referencia_pago VARCHAR(60) NULL",
-    "CREATE INDEX IF NOT EXISTS idx_auditoria_empresa_fecha ON auditoria (empresa_id, fecha DESC)"
+    "CREATE INDEX IF NOT EXISTS idx_auditoria_empresa_fecha ON auditoria (empresa_id, fecha DESC)",
+    // Correos automaticos, salud y uso (migracion 20261031020000)
+    "ALTER TABLE empresas ADD COLUMN IF NOT EXISTS correos_automaticos BOOLEAN NOT NULL DEFAULT true",
+    "ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS ultimo_acceso TIMESTAMPTZ NULL",
+    `CREATE TABLE IF NOT EXISTS errores_servidor (
+      error_id SERIAL PRIMARY KEY, fecha TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      metodo VARCHAR(10), ruta VARCHAR(200), status INTEGER, empresa_id INTEGER NULL, usuario_id INTEGER NULL)`,
+    "CREATE INDEX IF NOT EXISTS idx_errores_servidor_fecha ON errores_servidor (fecha DESC)",
+    `CREATE TABLE IF NOT EXISTS uso_pantallas (
+      fecha DATE NOT NULL, empresa_id INTEGER NOT NULL, usuario_id INTEGER NOT NULL,
+      ruta VARCHAR(80) NOT NULL, visitas INTEGER NOT NULL DEFAULT 1,
+      PRIMARY KEY (fecha, empresa_id, usuario_id, ruta))`,
+    "ALTER TABLE errores_servidor ENABLE ROW LEVEL SECURITY",
+    "ALTER TABLE uso_pantallas ENABLE ROW LEVEL SECURITY"
   ]) {
     await sequelize.query(sql).catch(err => console.error("Columna nueva:", err.message));
   }

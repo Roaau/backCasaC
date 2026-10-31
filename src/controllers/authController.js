@@ -58,6 +58,8 @@ export const login = async (req, res) => {
     if (user.intentos_fallidos || user.bloqueado_hasta) {
       await user.update({ intentos_fallidos: 0, bloqueado_hasta: null });
     }
+    // Ultimo acceso para el panel de salud (si falla no impide entrar)
+    Promise.resolve().then(() => Usuario.update({ ultimo_acceso: new Date() }, { where: { usuario_id: user.usuario_id } })).catch(() => {});
 
     if (user.activo === false) {
       return res.status(403).json({ mensaje: "Cuenta desactivada. Contacta al administrador." });

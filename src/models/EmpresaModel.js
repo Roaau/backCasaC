@@ -33,6 +33,8 @@ const Empresa = sequelize.define('Empresa', {
   // PIN de autorizacion: si esta activo, el empleado lo captura para tareas importantes
   pin_autorizacion_activo: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
   pin_autorizacion_hash:   { type: DataTypes.STRING(100), allowNull: true },
+  // Resumen semanal y alertas de agotados/caducidad por correo
+  correos_automaticos:     { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: true },
   creado_en:       { type: DataTypes.DATE, allowNull: true, defaultValue: DataTypes.NOW }
 }, { tableName: 'empresas', timestamps: false });
 
