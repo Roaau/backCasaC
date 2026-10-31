@@ -116,8 +116,8 @@ Sucursal.hasMany(MovimientoInventario, { foreignKey: 'sucursal_id' });
 
 const app = express();
 app.set('trust proxy', 1);
-// Dominio propio: https://app.kairuma.dev y https://kairuma.dev (sesion en cookie httpOnly, ver utils/sesionCookie.js)
-const defaultFrontendOrigins = ['https://sc-gamma-flame.vercel.app', 'https://app.kairuma.dev', 'https://kairuma.dev', 'https://www.kairuma.dev'];
+// Dominio propio: https://pos.kairuma.dev (sesion en cookie httpOnly, ver utils/sesionCookie.js)
+const defaultFrontendOrigins = ['https://sc-gamma-flame.vercel.app', 'https://pos.kairuma.dev'];
 const allowedOrigins = [...new Set([
   ...defaultFrontendOrigins,
   ...(process.env.FRONTEND_URL || '')

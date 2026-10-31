@@ -1,15 +1,16 @@
 // Sesion en cookie segura (httpOnly) cuando el front y el back comparten dominio propio
-// (app.kairuma.dev y api.kairuma.dev). En ese caso el navegador guarda la sesion donde JavaScript no la puede leer.
+// (pos.kairuma.dev y api-pos.kairuma.dev). En ese caso el navegador guarda la sesion donde JavaScript no la puede leer.
 // En los dominios viejos (vercel.app / onrender.com) se sigue usando el token en el header Authorization.
 //
 // Variables: COOKIE_DOMAIN=kairuma.dev (sin punto inicial). Si no esta, nunca se usa cookie.
+// La cookie queda solo en el host de la API (sin atributo domain), asi otros proyectos de kairuma.dev no la reciben.
 
 export const NOMBRE_COOKIE = "scpos_sesion";
 const OCHO_HORAS_MS = 8 * 60 * 60 * 1000;
 
 const dominioCookie = () => String(process.env.COOKIE_DOMAIN || "").trim().replace(/^\./, "");
 
-/** La peticion viene del front en el dominio propio (ej. https://app.kairuma.dev). */
+/** La peticion viene del front en el dominio propio (ej. https://pos.kairuma.dev). */
 export const usaCookie = (req) => {
   const dominio = dominioCookie();
   if (!dominio) return false;
@@ -26,8 +27,7 @@ export const ponerCookieSesion = (res, token) => {
   res.cookie(NOMBRE_COOKIE, token, {
     httpOnly: true,
     secure: true,
-    sameSite: "lax",
-    domain: dominioCookie(),
+    sameSite: "lax",
     path: "/",
     maxAge: OCHO_HORAS_MS
   });
@@ -35,7 +35,7 @@ export const ponerCookieSesion = (res, token) => {
 
 export const borrarCookieSesion = (res) => {
   if (!dominioCookie()) return;
-  res.clearCookie(NOMBRE_COOKIE, { httpOnly: true, secure: true, sameSite: "lax", domain: dominioCookie(), path: "/" });
+  res.clearCookie(NOMBRE_COOKIE, { httpOnly: true, secure: true, sameSite: "lax", path: "/" });
 };
 
 /** Lee una cookie del header Cookie sin dependencias. */

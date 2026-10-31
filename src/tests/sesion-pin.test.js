@@ -150,9 +150,9 @@ describe('Sesion en cookie (dominio propio)', () => {
 
   test('solo usa cookie si COOKIE_DOMAIN esta definido y la peticion viene de ese dominio', () => {
     delete process.env.COOKIE_DOMAIN;
-    expect(usaCookie({ headers: { origin: 'https://app.kairuma.dev' } })).toBe(false);
+    expect(usaCookie({ headers: { origin: 'https://pos.kairuma.dev' } })).toBe(false);
     process.env.COOKIE_DOMAIN = 'kairuma.dev';
-    expect(usaCookie({ headers: { origin: 'https://app.kairuma.dev' } })).toBe(true);
+    expect(usaCookie({ headers: { origin: 'https://pos.kairuma.dev' } })).toBe(true);
     expect(usaCookie({ headers: { origin: 'https://sc-gamma-flame.vercel.app' } })).toBe(false);
     expect(usaCookie({ headers: { origin: 'https://kairuma.dev.evil.com' } })).toBe(false);
   });
