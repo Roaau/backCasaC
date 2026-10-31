@@ -16,7 +16,7 @@ export const NIVELES = {
   },
   especializado: {
     nombre: "Especializado", precio: 699, usuarios: 5, configuracion: 999, ia_diaria: 25,
-    giros: ["minisuper", "ropa", "zapateria", "joyeria", "optica", "electronica", "general"],
+    giros: ["minisuper", "ropa", "zapateria", "joyeria", "optica", "electronica", "general", "restaurante"],
   },
   catalogo_grande: {
     nombre: "Catálogo grande", precio: 849, usuarios: 5, configuracion: 999, ia_diaria: 25,

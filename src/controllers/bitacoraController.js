@@ -28,7 +28,10 @@ export const ACCIONES_BITACORA = {
   PIN_AUTORIZACION: 'Autorizado con PIN',
   PIN_GENERADO: 'PIN generado',
   PIN_DESACTIVADO: 'PIN desactivado',
-  PLAN_SOLICITUD: 'Solicitud de plan'
+  PLAN_SOLICITUD: 'Solicitud de plan',
+  COMANDA_CANCELADA: 'Cuenta de restaurante cancelada',
+  COMANDA_PLATILLO_CANCELADO: 'Platillo cancelado',
+  MESAS_CREAR: 'Mesas nuevas'
 };
 
 // GET /api/reportes/bitacora?desde=&hasta=&accion=&usuario_id=&sucursal_id=&page=

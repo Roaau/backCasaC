@@ -25,6 +25,7 @@ export const GIROS = {
   joyeria:       "Joyería / Bisutería",
   optica:        "Óptica",
   forrajeria:    "Forrajería / Semillas",
+  restaurante:   "Restaurante / Cocina económica / Cafetería",
 };
 
 export const UNIDADES_VENTA = ["pieza", "kg", "litro", "metro", "bulto"];

@@ -51,6 +51,7 @@ import superadminRoutes from "./routes/superadminRoutes.js";
 import cotizacionesRoutes from "./routes/cotizacionesRoutes.js";
 import onboardingRoutes from "./routes/onboardingRoutes.js";
 import notificacionesRoutes from "./routes/notificacionesRoutes.js";
+import restauranteRoutes from "./routes/restauranteRoutes.js";
 import cron from "node-cron";
 import { realizarBackup } from "./backup.js";
 import { cfdiHabilitado } from "./config/features.js";
@@ -92,6 +93,7 @@ import "./models/DetalleCotizacion.js";
 import "./models/Auditoria.js";
 import "./models/Notificacion.js";
 import "./models/Lote.js";
+import "./models/Restaurante.js";
 import Empresa from "./models/EmpresaModel.js";
 import { notificarVencimientoProximo } from "./services/emailService.js";
 import { sumarAFecha } from "./utils/planes.js";
@@ -231,8 +233,14 @@ io.on("connection", (socket) => {
     }
   });
 
+  // Pantalla de cocina: aviso "hay cambios" (sin datos; la pantalla vuelve a pedir la lista con su sesion)
+  socket.on("unirse-cocina", (sucursalId) => {
+    if (socket.usuario && Number(sucursalId) > 0) socket.join(`cocina-${Number(sucursalId)}`);
+  });
+
   socket.on("disconnect", () => {});
 });
+app.set("io", io);
 
 // Cron diario (9:00 hora de Mexico): avisa por correo a las empresas cuyo plan vence en 7 dias o mañana.
 // aviso_vencimiento_enviado evita mandar dos veces el mismo dia.
@@ -365,6 +373,7 @@ app.use("/api/cotizaciones", verificarToken, cotizacionesRoutes);
 app.use("/api/onboarding",  verificarToken, onboardingRoutes);
 app.use("/api/notificaciones", verificarToken, notificacionesRoutes);
 app.post("/api/uso", verificarToken, registrarUso);
+app.use("/api/restaurante", verificarToken, restauranteRoutes);
 app.use("/api/superadmin",   verificarToken, verificarSuperAdmin, superadminRoutes);
 
 app.get("/api", (req, res) => res.json({ mensaje: "Servidor arriba" }));
@@ -428,7 +437,13 @@ try {
       lote VARCHAR(60) NULL, fecha_caducidad DATE NULL, cantidad DECIMAL(12,3) NOT NULL DEFAULT 0,
       creado_en TIMESTAMPTZ NOT NULL DEFAULT NOW())`,
     "CREATE INDEX IF NOT EXISTS idx_lotes_producto_sucursal ON lotes (producto_id, sucursal_id)",
-    "ALTER TABLE lotes ENABLE ROW LEVEL SECURITY"
+    "ALTER TABLE lotes ENABLE ROW LEVEL SECURITY",
+    // Restaurantes (migracion 20261031050000); las tablas las crea sync, aqui solo se cierran a la API publica
+    "ALTER TABLE IF EXISTS mesas ENABLE ROW LEVEL SECURITY",
+    "ALTER TABLE IF EXISTS comandas ENABLE ROW LEVEL SECURITY",
+    "ALTER TABLE IF EXISTS comanda_items ENABLE ROW LEVEL SECURITY",
+    "CREATE INDEX IF NOT EXISTS idx_comandas_sucursal_estado ON comandas (sucursal_id, estado)",
+    "CREATE INDEX IF NOT EXISTS idx_comanda_items_comanda ON comanda_items (comanda_id)"
   ]) {
     await sequelize.query(sql).catch(err => console.error("Columna nueva:", err.message));
   }
