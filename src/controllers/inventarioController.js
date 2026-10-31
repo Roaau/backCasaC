@@ -12,6 +12,7 @@ import {
 } from '../utils/scope.js';
 import { rangoFechasReporte } from '../utils/fechas.js';
 import { cantidadValida } from '../utils/giros.js';
+import { registrarEntradaLote, descontarLotes, listarLotes } from '../utils/lotes.js';
 
 const TIPOS_VALIDOS     = ['ENTRADA', 'SALIDA', 'PERDIDA'];
 const MOTIVOS_POR_TIPO  = {
@@ -23,7 +24,7 @@ const MOTIVOS_POR_TIPO  = {
 export const registrarMovimiento = async (req, res) => {
   const t = await sequelize.transaction();
   try {
-    const { producto_id, tipo_movimiento, motivo, cantidad, observaciones } = req.body;
+    const { producto_id, tipo_movimiento, motivo, cantidad, observaciones, lote, fecha_caducidad, lote_id } = req.body;
     const usuario_id = req.usuario.id;
     const sucursal_id = await resolverSucursalOperativa(req);
 
@@ -65,6 +66,12 @@ export const registrarMovimiento = async (req, res) => {
     }
 
     await stockReg.update({ stock_actual: stockNuevo }, { transaction: t });
+    // Lotes: la entrada puede traer lote/caducidad; la salida sale del lote elegido o del que caduca primero
+    if (tipo_movimiento === 'ENTRADA') {
+      await registrarEntradaLote({ empresa_id: req.usuario.empresa_id, producto_id, sucursal_id, lote, fecha_caducidad, cantidad: cant, existenciaPrevia: stockAnterior, transaction: t });
+    } else {
+      await descontarLotes({ producto_id, sucursal_id, cantidad: cant, lote_id: lote_id ? Number(lote_id) : null, transaction: t });
+    }
     // Mantener stock global sincronizado
     const diff = tipo_movimiento === 'ENTRADA' ? cant : -cant;
     await producto.increment('stock_actual', { by: diff, transaction: t });
@@ -117,6 +124,22 @@ export const getHistorial = async (req, res) => {
       usuario: m.Usuario?.nombre || 'N/A', observaciones: m.observaciones || '',
       nombre_sucursal: m.Sucursal?.nombre || null
     })));
+  } catch (error) {
+    responderErrorScope(res, error);
+  }
+};
+
+
+// GET /api/inventario/lotes/:producto_id?sucursal_id= — lotes con existencia (admin ve todas sus sucursales)
+export const getLotes = async (req, res) => {
+  try {
+    const producto_id = Number(req.params.producto_id);
+    if (!producto_id) return res.status(400).json({ error: 'producto_id requerido' });
+    const producto = await Producto.findOne({ where: { producto_id, empresa_id: req.usuario.empresa_id }, attributes: ['producto_id'] });
+    if (!producto) return res.status(404).json({ error: 'Producto no encontrado' });
+    const todas = req.usuario.rol === 1 && req.query.todas_sucursales === 'true';
+    const sucursal_id = todas ? null : await resolverSucursalOperativa(req);
+    res.json(await listarLotes({ empresa_id: req.usuario.empresa_id, producto_id, sucursal_id }));
   } catch (error) {
     responderErrorScope(res, error);
   }

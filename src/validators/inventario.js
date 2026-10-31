@@ -8,6 +8,9 @@ export const validarMovimiento = [
     .withMessage('tipo_movimiento debe ser ENTRADA, SALIDA o PERDIDA'),
   body('cantidad').isFloat({ gt: 0 }).withMessage('La cantidad debe ser mayor a 0'),
   body('motivo').optional({ nullable: true }).isString().withMessage('El motivo debe ser texto'),
+  body('lote').optional({ nullable: true }).isString().isLength({ max: 60 }).withMessage('El lote no puede superar 60 caracteres'),
+  body('fecha_caducidad').optional({ nullable: true, checkFalsy: true }).isISO8601().withMessage('Fecha de caducidad invalida'),
+  body('lote_id').optional({ nullable: true }).isInt({ min: 1 }).withMessage('lote_id invalido'),
   body('observaciones').optional({ nullable: true }).isString()
     .isLength({ max: 255 }).withMessage('Las observaciones no pueden superar 255 caracteres'),
 ];

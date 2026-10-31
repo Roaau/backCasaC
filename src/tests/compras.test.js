@@ -1,3 +1,4 @@
+jest.mock('../utils/lotes.js', () => ({ __esModule: true, descontarLotes: jest.fn().mockResolvedValue([]), registrarEntradaLote: jest.fn().mockResolvedValue(null), existenciaVigente: jest.fn().mockResolvedValue(null), actualizarCaducidadProducto: jest.fn(), listarLotes: jest.fn().mockResolvedValue([]) }));
 jest.mock('sequelize', () => ({
   Op: { between: Symbol('between') }
 }));

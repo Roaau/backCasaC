@@ -11,6 +11,7 @@ import { Op } from "sequelize";
 import { resolverScopeSucursales, resolverSucursalOperativa, responderErrorScope } from "../utils/scope.js";
 import { rangoFechasReporte } from "../utils/fechas.js";
 import { cantidadValida } from "../utils/giros.js";
+import { registrarEntradaLote } from '../utils/lotes.js';
 
 export const listarCompras = async (req, res) => {
   try {
@@ -135,6 +136,11 @@ export const crearCompra = async (req, res) => {
             stock_minimo: 0
           }, { transaction: t });
         }
+        // Lote y caducidad de lo que llego (opcional)
+        await registrarEntradaLote({
+          empresa_id: req.usuario.empresa_id, producto_id: item.producto_id, sucursal_id,
+          lote: item.lote, fecha_caducidad: item.fecha_caducidad, cantidad, existenciaPrevia: stockAnterior, transaction: t
+        });
         await MovimientoInventario.create({
           producto_id: item.producto_id,
           nombre_producto: productosCompra.get(Number(item.producto_id))?.nombre ?? item.nombre_producto,

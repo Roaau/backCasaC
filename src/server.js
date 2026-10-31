@@ -91,6 +91,7 @@ import "./models/Cotizacion.js";
 import "./models/DetalleCotizacion.js";
 import "./models/Auditoria.js";
 import "./models/Notificacion.js";
+import "./models/Lote.js";
 import Empresa from "./models/EmpresaModel.js";
 import { notificarVencimientoProximo } from "./services/emailService.js";
 import { sumarAFecha } from "./utils/planes.js";
@@ -420,7 +421,14 @@ try {
     "ALTER TABLE uso_pantallas ENABLE ROW LEVEL SECURITY",
     // Ventas sin internet (migracion 20261031030000)
     "ALTER TABLE ventas ADD COLUMN IF NOT EXISTS id_local VARCHAR(40) NULL",
-    "CREATE UNIQUE INDEX IF NOT EXISTS idx_ventas_id_local ON ventas (sucursal_id, id_local) WHERE id_local IS NOT NULL"
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_ventas_id_local ON ventas (sucursal_id, id_local) WHERE id_local IS NOT NULL",
+    // Lotes (migracion 20261031040000)
+    `CREATE TABLE IF NOT EXISTS lotes (
+      lote_id SERIAL PRIMARY KEY, empresa_id INTEGER NOT NULL, producto_id INTEGER NOT NULL, sucursal_id INTEGER NOT NULL,
+      lote VARCHAR(60) NULL, fecha_caducidad DATE NULL, cantidad DECIMAL(12,3) NOT NULL DEFAULT 0,
+      creado_en TIMESTAMPTZ NOT NULL DEFAULT NOW())`,
+    "CREATE INDEX IF NOT EXISTS idx_lotes_producto_sucursal ON lotes (producto_id, sucursal_id)",
+    "ALTER TABLE lotes ENABLE ROW LEVEL SECURITY"
   ]) {
     await sequelize.query(sql).catch(err => console.error("Columna nueva:", err.message));
   }

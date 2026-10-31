@@ -1,3 +1,4 @@
+jest.mock('../utils/lotes.js', () => ({ __esModule: true, descontarLotes: jest.fn().mockResolvedValue([]), registrarEntradaLote: jest.fn().mockResolvedValue(null), existenciaVigente: jest.fn().mockResolvedValue(null), actualizarCaducidadProducto: jest.fn(), listarLotes: jest.fn().mockResolvedValue([]) }));
 const modelo = (...metodos) => ({ __esModule: true, default: Object.fromEntries(metodos.map(m => [m, jest.fn()])) });
 
 jest.mock('../config/database.js', () => ({ __esModule: true, default: { transaction: jest.fn(), query: jest.fn() } }));

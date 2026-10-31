@@ -1,5 +1,5 @@
 import express from 'express';
-import { registrarMovimiento, getHistorial } from '../controllers/inventarioController.js';
+import { registrarMovimiento, getHistorial, getLotes } from '../controllers/inventarioController.js';
 import { validarMovimiento } from '../validators/inventario.js';
 import { validate } from '../middleware/validate.js';
 import { requierePin } from '../middleware/pinAutorizacion.js';
@@ -12,5 +12,6 @@ const router = express.Router();
 
 router.post('/movimiento', validarMovimiento, validate, requierePin('Sacar mercancía del inventario', esSalida), auditar('INVENTARIO_MOVIMIENTO', 'inventario'), registrarMovimiento);
 router.get('/historial', getHistorial);
+router.get('/lotes/:producto_id', getLotes);
 
 export default router;

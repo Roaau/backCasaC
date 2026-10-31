@@ -20,6 +20,7 @@ import { validarLineaVenta, calcularTotalVenta } from "../utils/ventas.js";
 import { cfdiHabilitado } from "../config/features.js";
 import { cantidadValida } from "../utils/giros.js";
 import { regresarAInventario } from "../utils/inventario.js";
+import { descontarLotes, existenciaVigente } from "../utils/lotes.js";
 import { normalizarCobro, efectivoADevolver, montosDeVenta, sqlEfectivo, sqlTarjeta, sqlTransferencia } from "../utils/pagos.js";
 
 const esCajaDeHoy = (caja) => esMismoDiaLocal(caja.fecha_apertura);
@@ -125,15 +126,6 @@ export const crearVenta = async (req, res) => {
       if (!cantidadValida(cantidadSolicitada, prod.unidad_venta)) {
         throw new Error(`Cantidad invalida para ${prod.nombre}: se vende por ${prod.unidad_venta || "pieza"}.`);
       }
-      if (prod.fecha_caducidad && prod.fecha_caducidad < fechaLocalISO()) {
-        if (!offline) {
-          const error = new Error(`${prod.nombre} esta caducado (${prod.fecha_caducidad}). No se puede vender.`);
-          error.status = 409;
-          throw error;
-        }
-        avisosOffline.push(`${prod.nombre} estaba caducado (${prod.fecha_caducidad})`);
-      }
-
       let linea;
       try {
         linea = validarLineaVenta(prod, cantidadSolicitada, precioUnitario);
@@ -161,6 +153,21 @@ export const crearVenta = async (req, res) => {
         }, { transaction: t });
       }
 
+      // Caducidad: con lotes se vende de los vigentes; sin lotes manda productos.fecha_caducidad
+      if (prod.fecha_caducidad && prod.fecha_caducidad < fechaLocalISO()) {
+        const vigente = await existenciaVigente({ producto_id: item.producto_id, sucursal_id, existencia: stockReg.stock_actual, transaction: t });
+        if (vigente === null || vigente < cantidadSolicitada) {
+          if (!offline) {
+            const error = new Error(vigente === null || vigente <= 0
+              ? `${prod.nombre} esta caducado (${prod.fecha_caducidad}). No se puede vender.`
+              : `De ${prod.nombre} solo quedan ${vigente} sin caducar.`);
+            error.status = 409;
+            throw error;
+          }
+          avisosOffline.push(`${prod.nombre} estaba caducado (${prod.fecha_caducidad})`);
+        }
+      }
+
       if (Number(stockReg.stock_actual) < cantidadSolicitada) {
         if (!offline) throw new Error(`Stock insuficiente en ${prod.nombre}. Disponible: ${stockReg.stock_actual}`);
         // La mercancia ya salio: la existencia queda negativa y se avisa para corregir el inventario
@@ -183,6 +190,8 @@ export const crearVenta = async (req, res) => {
 
       await stockReg.decrement("stock_actual", { by: cantidad, transaction: t });
       await prod.decrement("stock_actual", { by: cantidad, transaction: t });
+      // Descuenta de los lotes (primero lo que caduca antes); sin lotes no hace nada
+      await descontarLotes({ producto_id: item.producto_id, sucursal_id, cantidad, transaction: t });
       await MovimientoInventario.create({
         producto_id: item.producto_id,
         nombre_producto: prod.nombre,
