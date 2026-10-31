@@ -52,13 +52,43 @@ describe('Auth — login()', () => {
   });
 
   test('devuelve 401 si la contraseña es incorrecta', async () => {
+    const update = jest.fn().mockResolvedValue(true);
     Usuario.findOne.mockResolvedValue({
-      usuario_id: 1, usuario: 'admin', contrasena: 'hash', activo: true, empresa_id: 1, es_superadmin: false
+      usuario_id: 1, usuario: 'admin', contrasena: 'hash', activo: true, empresa_id: 1, es_superadmin: false,
+      intentos_fallidos: 0, update
     });
     bcrypt.compare.mockResolvedValue(false);
     const res = mockRes();
     await login({ body: { usuario: 'admin', contrasena: 'wrong' } }, res);
     expect(res.status).toHaveBeenCalledWith(401);
+    expect(update).toHaveBeenCalledWith({ intentos_fallidos: 1 });
+  });
+
+  test('bloquea la cuenta 15 min al quinto intento fallido', async () => {
+    const update = jest.fn().mockResolvedValue(true);
+    Usuario.findOne.mockResolvedValue({
+      usuario_id: 1, usuario: 'admin', contrasena: 'hash', activo: true, empresa_id: 1, es_superadmin: false,
+      intentos_fallidos: 4, update
+    });
+    bcrypt.compare.mockResolvedValue(false);
+    const res = mockRes();
+    await login({ body: { usuario: 'admin', contrasena: 'wrong' } }, res);
+    expect(res.status).toHaveBeenCalledWith(429);
+    const datos = update.mock.calls[0][0];
+    expect(datos.intentos_fallidos).toBe(0);
+    expect(datos.bloqueado_hasta.getTime()).toBeGreaterThan(Date.now() + 14 * 60000);
+  });
+
+  test('cuenta bloqueada no deja entrar aunque la contrasena sea correcta', async () => {
+    Usuario.findOne.mockResolvedValue({
+      usuario_id: 1, usuario: 'admin', contrasena: 'hash', activo: true, empresa_id: 1, es_superadmin: false,
+      bloqueado_hasta: new Date(Date.now() + 10 * 60000), update: jest.fn()
+    });
+    bcrypt.compare.mockResolvedValue(true);
+    const res = mockRes();
+    await login({ body: { usuario: 'admin', contrasena: 'correcta' } }, res);
+    expect(res.status).toHaveBeenCalledWith(429);
+    expect(bcrypt.compare).not.toHaveBeenCalled();
   });
 
   test('retorna token si las credenciales son correctas', async () => {
@@ -74,6 +104,7 @@ describe('Auth — login()', () => {
     const res = mockRes();
     await login({ body: { usuario: 'admin', contrasena: 'correcta' } }, res);
     expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ token: 'token-jwt-fake' }));
+    expect(jwt.sign.mock.calls[0][0]).toEqual(expect.objectContaining({ id: 1, sv: 0 }));
   });
 
   test('bloquea login cuando la empresa sigue pendiente', async () => {

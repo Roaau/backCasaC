@@ -13,11 +13,14 @@ import { enviarCodigoRegistro, enviarCodigoReset, notificarNuevaEmpresa, notific
 import { validarLimiteUsuarios } from "../utils/planLimits.js";
 import { normalizarGiro } from "../utils/giros.js";
 import { cotizar } from "../utils/planes.js";
+import { limpiarCacheSesion } from "../middleware/authMiddleware.js";
 
 const generarCodigo = () =>
   'INV-' + crypto.randomBytes(3).toString('hex').toUpperCase();
 
 const MENSAJE_LOGIN_INVALIDO = "Usuario o contrasena incorrectos";
+const MAX_INTENTOS_LOGIN = 5;
+const MINUTOS_BLOQUEO = 15;
 
 // ── POST /api/auth/login ─────────────────────────────────────────────────────
 export const login = async (req, res) => {
@@ -30,8 +33,31 @@ export const login = async (req, res) => {
     const user = await Usuario.findOne({ where: { usuario } });
     if (!user) return res.status(401).json({ mensaje: MENSAJE_LOGIN_INVALIDO });
 
+    // Bloqueo temporal tras varios intentos fallidos
+    if (user.bloqueado_hasta && new Date(user.bloqueado_hasta) > new Date()) {
+      const minutos = Math.max(1, Math.ceil((new Date(user.bloqueado_hasta) - Date.now()) / 60000));
+      return res.status(429).json({
+        mensaje: `Cuenta bloqueada por demasiados intentos. Intenta de nuevo en ${minutos} min.`,
+        codigo: "CUENTA_BLOQUEADA"
+      });
+    }
+
     const passwordMatch = await bcrypt.compare(contrasena, user.contrasena);
-    if (!passwordMatch) return res.status(401).json({ mensaje: MENSAJE_LOGIN_INVALIDO });
+    if (!passwordMatch) {
+      const intentos = Number(user.intentos_fallidos || 0) + 1;
+      if (intentos >= MAX_INTENTOS_LOGIN) {
+        await user.update({ intentos_fallidos: 0, bloqueado_hasta: new Date(Date.now() + MINUTOS_BLOQUEO * 60000) });
+        return res.status(429).json({
+          mensaje: `Demasiados intentos fallidos. La cuenta quedó bloqueada ${MINUTOS_BLOQUEO} min.`,
+          codigo: "CUENTA_BLOQUEADA"
+        });
+      }
+      await user.update({ intentos_fallidos: intentos });
+      return res.status(401).json({ mensaje: MENSAJE_LOGIN_INVALIDO });
+    }
+    if (user.intentos_fallidos || user.bloqueado_hasta) {
+      await user.update({ intentos_fallidos: 0, bloqueado_hasta: null });
+    }
 
     if (user.activo === false) {
       return res.status(403).json({ mensaje: "Cuenta desactivada. Contacta al administrador." });
@@ -77,7 +103,8 @@ export const login = async (req, res) => {
         rol:           user.rol_id,
         empresa_id:    user.empresa_id  ?? null,
         sucursal_id:   user.sucursal_id ?? null,
-        es_superadmin: user.es_superadmin === true
+        es_superadmin: user.es_superadmin === true,
+        sv:            Number(user.sesion_version || 0)
       },
       process.env.JWT_SECRET,
       { expiresIn: '8h' }
@@ -473,7 +500,12 @@ export const confirmarResetContrasena = async (req, res) => {
   if (!solicitud) return res.status(403).json({ mensaje: 'Código inválido o expirado.' });
 
   const hash = await bcrypt.hash(nueva_contrasena, 10);
-  await Usuario.update({ contrasena: hash }, { where: { usuario: usuario.trim() } });
+  // Al cambiar la contrasena se desbloquea la cuenta y se cierran las sesiones abiertas
+  await Usuario.update(
+    { contrasena: hash, intentos_fallidos: 0, bloqueado_hasta: null, sesion_version: sequelize.literal('COALESCE(sesion_version, 0) + 1') },
+    { where: { usuario: usuario.trim() } }
+  );
+  limpiarCacheSesion();
   await SolicitudReset.update({ usado: true }, { where: { id: solicitud.id } });
 
   return res.json({ mensaje: 'Contraseña actualizada correctamente.' });
@@ -489,5 +521,17 @@ export const listarCodigos = async (req, res) => {
     return res.json(codigos);
   } catch {
     return res.status(500).json({ error: 'Error al obtener códigos' });
+  }
+};
+
+// ── POST /api/auth/cerrar-sesiones ───────────────────────────────────────────
+// Invalida todos los tokens del usuario (en todos los aparatos), incluido el actual.
+export const cerrarTodasLasSesiones = async (req, res) => {
+  try {
+    await Usuario.increment('sesion_version', { by: 1, where: { usuario_id: req.usuario.id } });
+    limpiarCacheSesion(req.usuario.id);
+    return res.json({ mensaje: "Se cerró la sesión en todos los aparatos." });
+  } catch (error) {
+    return res.status(500).json({ mensaje: "No se pudo cerrar las sesiones" });
   }
 };

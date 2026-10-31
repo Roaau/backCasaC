@@ -45,7 +45,6 @@ import catalogoRoutes from "./routes/catalogoRoutes.js";
 import proveedoresRoutes from "./routes/proveedoresRoutes.js";
 import clientesRoutes from "./routes/clientesRoutes.js";
 import comprasRoutes from "./routes/comprasRoutes.js";
-import creditosRoutes from "./routes/creditosRoutes.js";
 import devolucionRoutes from "./routes/devolucionRoutes.js";
 import iaRoutes from "./routes/iaRoutes.js";
 import superadminRoutes from "./routes/superadminRoutes.js";
@@ -85,7 +84,6 @@ import "./models/SolicitudReset.js";
 import "./models/Proveedor.js";
 import "./models/Compra.js";
 import "./models/DetalleCompra.js";
-import "./models/PagoCredito.js";
 import "./models/Cotizacion.js";
 import "./models/DetalleCotizacion.js";
 import "./models/Auditoria.js";
@@ -339,7 +337,6 @@ app.use("/api/catalogo",     verificarToken, catalogoRoutes);
 app.use("/api/proveedores",  verificarToken, proveedoresRoutes);
 app.use("/api/clientes",     verificarToken, clientesRoutes);
 app.use("/api/compras",      verificarToken, comprasRoutes);
-app.use("/api/creditos",      verificarToken, creditosRoutes);
 app.use("/api/devoluciones", verificarToken, devolucionRoutes);
 app.use("/api/ia",           verificarToken, iaRoutes);
 app.use("/api/cotizaciones", verificarToken, cotizacionesRoutes);
@@ -373,6 +370,16 @@ try {
   // Columnas opcionales que pueden haber quedado NOT NULL en BD antigua
   await sequelize.query("ALTER TABLE IF EXISTS sucursales ALTER COLUMN cp_sat DROP NOT NULL").catch(() => {});
   await sequelize.query("ALTER TABLE IF EXISTS sucursales ALTER COLUMN direccion DROP NOT NULL").catch(() => {});
+  // Columnas de seguridad (migracion 20261031000000); idempotente por si no se corrio db:migrate
+  for (const sql of [
+    "ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS intentos_fallidos INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS bloqueado_hasta TIMESTAMPTZ NULL",
+    "ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS sesion_version INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE empresas ADD COLUMN IF NOT EXISTS pin_autorizacion_activo BOOLEAN NOT NULL DEFAULT false",
+    "ALTER TABLE empresas ADD COLUMN IF NOT EXISTS pin_autorizacion_hash VARCHAR(100) NULL"
+  ]) {
+    await sequelize.query(sql).catch(err => console.error("Columna de seguridad:", err.message));
+  }
   server.listen(PORT, () => {
     console.log(`Servidor corriendo en: http://localhost:${PORT}`);
     // Backup automatico diario a las 3 AM

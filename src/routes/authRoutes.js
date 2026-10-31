@@ -1,5 +1,5 @@
 import express from "express";
-import { login, registro, actualizarPerfil, solicitarCodigoRegistro, solicitarResetContrasena, confirmarResetContrasena } from "../controllers/authController.js";
+import { login, registro, actualizarPerfil, cerrarTodasLasSesiones, solicitarCodigoRegistro, solicitarResetContrasena, confirmarResetContrasena } from "../controllers/authController.js";
 import { validarLogin } from "../validators/auth.js";
 import { validate } from "../middleware/validate.js";
 import { verificarToken } from "../middleware/authMiddleware.js";
@@ -14,5 +14,6 @@ router.post("/solicitar-reset",    solicitarResetContrasena);
 router.post("/confirmar-reset",    confirmarResetContrasena);
 router.put("/perfil",              verificarToken, actualizarPerfil);
 router.get("/negocio",             verificarToken, getConfigNegocio);
+router.post("/cerrar-sesiones",    verificarToken, cerrarTodasLasSesiones);
 
 export default router;

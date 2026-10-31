@@ -1,3 +1,4 @@
+import { limpiarCacheSesion } from '../middleware/authMiddleware.js';
 import { Router } from 'express';
 import {
   listarEmpresas,
@@ -23,6 +24,12 @@ import {
 } from '../controllers/superadminController.js';
 
 const router = Router();
+
+// Cambios de estado de usuarios/empresas aplican de inmediato en la revision de sesion
+router.use((req, res, next) => {
+  if (req.method !== 'GET') res.on('finish', () => limpiarCacheSesion());
+  next();
+});
 
 router.get('/empresas',              listarEmpresas);
 router.get('/empresas/:id/detalle',  detalleEmpresa);

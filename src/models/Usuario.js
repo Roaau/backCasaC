@@ -12,7 +12,11 @@ const Usuario = sequelize.define("Usuario", {
   foto_perfil: { type: DataTypes.TEXT, allowNull: true },
   color_tema:  { type: DataTypes.STRING(7), allowNull: true },
   activo:        { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: true },
-  es_superadmin: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false }
+  es_superadmin: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
+  // Bloqueo por contrasenas incorrectas y "cerrar sesion en todos los aparatos"
+  intentos_fallidos: { type: DataTypes.INTEGER, allowNull: false, defaultValue: 0 },
+  bloqueado_hasta:   { type: DataTypes.DATE, allowNull: true },
+  sesion_version:    { type: DataTypes.INTEGER, allowNull: false, defaultValue: 0 }
 }, { tableName: "usuarios", timestamps: false });
 
 export default Usuario;

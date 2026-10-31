@@ -1,11 +1,14 @@
 import Empresa from '../models/EmpresaModel.js';
 import { obtenerEmpresaId, responderErrorScope } from '../utils/scope.js';
 import { normalizarGiro } from '../utils/giros.js';
+import bcrypt from 'bcrypt';
+import { generarPin, limpiarCachePin } from '../middleware/pinAutorizacion.js';
+import { registrarAuditoria } from '../utils/auditoria.js';
 
 export const getEmpresas = async (req, res) => {
   try {
     const empresa_id = obtenerEmpresaId(req.usuario);
-    const empresas = await Empresa.findAll({ where: { empresa_id, activo: true } });
+    const empresas = await Empresa.findAll({ where: { empresa_id, activo: true }, attributes: { exclude: ['pin_autorizacion_hash'] } });
     res.json(empresas);
   } catch (e) {
     responderErrorScope(res, e);
@@ -86,5 +89,57 @@ export const updateEmpresa = async (req, res) => {
     res.json({ mensaje: 'Empresa actualizada' });
   } catch (e) {
     responderErrorScope(res, e);
+  }
+};
+
+// ── PIN de autorizacion (solo admin) ────────────────────────────────────────
+// GET  /api/empresas/pin-autorizacion          -> { activo }
+// PUT  /api/empresas/pin-autorizacion { activo } -> al activar genera un codigo nuevo y lo regresa una sola vez
+// POST /api/empresas/pin-autorizacion/regenerar -> { codigo }
+export const getPinAutorizacion = async (req, res) => {
+  try {
+    const empresa = await Empresa.findByPk(req.usuario.empresa_id, { attributes: ['pin_autorizacion_activo'] });
+    if (!empresa) return res.status(404).json({ error: 'Empresa no encontrada' });
+    return res.json({ activo: empresa.pin_autorizacion_activo === true });
+  } catch (error) {
+    return res.status(500).json({ error: 'No se pudo leer la configuracion del PIN' });
+  }
+};
+
+const guardarPinNuevo = async (req, empresa) => {
+  const codigo = generarPin();
+  const hash = await bcrypt.hash(codigo, 10);
+  await empresa.update({ pin_autorizacion_activo: true, pin_autorizacion_hash: hash });
+  limpiarCachePin(empresa.empresa_id);
+  await registrarAuditoria(req, { accion: 'PIN_GENERADO', entidad: 'empresa', entidad_id: empresa.empresa_id });
+  return codigo;
+};
+
+export const setPinAutorizacion = async (req, res) => {
+  try {
+    const activo = req.body?.activo === true;
+    const empresa = await Empresa.findByPk(req.usuario.empresa_id);
+    if (!empresa) return res.status(404).json({ error: 'Empresa no encontrada' });
+    if (activo) {
+      const codigo = await guardarPinNuevo(req, empresa);
+      return res.json({ activo: true, codigo, mensaje: 'PIN activado' });
+    }
+    await empresa.update({ pin_autorizacion_activo: false, pin_autorizacion_hash: null });
+    limpiarCachePin(empresa.empresa_id);
+    await registrarAuditoria(req, { accion: 'PIN_DESACTIVADO', entidad: 'empresa', entidad_id: empresa.empresa_id });
+    return res.json({ activo: false, mensaje: 'PIN desactivado' });
+  } catch (error) {
+    return res.status(500).json({ error: 'No se pudo guardar la configuracion del PIN' });
+  }
+};
+
+export const regenerarPinAutorizacion = async (req, res) => {
+  try {
+    const empresa = await Empresa.findByPk(req.usuario.empresa_id);
+    if (!empresa) return res.status(404).json({ error: 'Empresa no encontrada' });
+    const codigo = await guardarPinNuevo(req, empresa);
+    return res.json({ activo: true, codigo, mensaje: 'PIN nuevo generado' });
+  } catch (error) {
+    return res.status(500).json({ error: 'No se pudo generar el PIN' });
   }
 };

@@ -30,7 +30,17 @@ const Empresa = sequelize.define('Empresa', {
   aviso_vencimiento_enviado: { type: DataTypes.DATEONLY, allowNull: true },
   email_contacto: { type: DataTypes.STRING(255), allowNull: true, unique: true },
   notas_admin:     { type: DataTypes.TEXT, allowNull: true },
+  // PIN de autorizacion: si esta activo, el empleado lo captura para tareas importantes
+  pin_autorizacion_activo: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
+  pin_autorizacion_hash:   { type: DataTypes.STRING(100), allowNull: true },
   creado_en:       { type: DataTypes.DATE, allowNull: true, defaultValue: DataTypes.NOW }
 }, { tableName: 'empresas', timestamps: false });
+
+// Nunca mandar el hash del PIN en respuestas JSON
+Empresa.prototype.toJSON = function toJSON() {
+  const valores = { ...this.get() };
+  delete valores.pin_autorizacion_hash;
+  return valores;
+};
 
 export default Empresa;

@@ -2,10 +2,14 @@ import express from 'express';
 import { registrarMovimiento, getHistorial } from '../controllers/inventarioController.js';
 import { validarMovimiento } from '../validators/inventario.js';
 import { validate } from '../middleware/validate.js';
+import { requierePin } from '../middleware/pinAutorizacion.js';
+
+// Sacar mercancia (salida o perdida) requiere PIN si el dueno lo activo
+const esSalida = (req) => ['SALIDA', 'PERDIDA'].includes(String(req.body?.tipo_movimiento || '').toUpperCase());
 
 const router = express.Router();
 
-router.post('/movimiento', validarMovimiento, validate, registrarMovimiento);
+router.post('/movimiento', validarMovimiento, validate, requierePin('Sacar mercancía del inventario', esSalida), registrarMovimiento);
 router.get('/historial', getHistorial);
 
 export default router;
