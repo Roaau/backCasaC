@@ -13,6 +13,7 @@ export const ACCIONES_BITACORA = {
   PRODUCTO_EDITAR: 'Producto editado',
   PRODUCTO_ELIMINAR: 'Producto eliminado',
   PRODUCTO_IMPORTAR: 'Productos importados',
+  PRECIO_CAMBIO: 'Cambio de precio de venta',
   INVENTARIO_MOVIMIENTO: 'Ajuste de inventario',
   COMPRA_CREAR: 'Compra',
   PROVEEDOR_CREAR: 'Proveedor nuevo',

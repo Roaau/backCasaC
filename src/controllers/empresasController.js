@@ -94,8 +94,8 @@ export const updateEmpresa = async (req, res) => {
 
 // ── PIN de autorizacion (solo admin) ────────────────────────────────────────
 // GET  /api/empresas/pin-autorizacion          -> { activo }
-// PUT  /api/empresas/pin-autorizacion { activo } -> al activar genera un codigo nuevo y lo regresa una sola vez
-// POST /api/empresas/pin-autorizacion/regenerar -> { codigo }
+// PUT  /api/empresas/pin-autorizacion { activo } -> al activar genera un codigo nuevo y lo regresa una sola vez.
+// El PIN solo cambia al desactivarlo y volverlo a activar; si ya estaba activo no se toca.
 export const getPinAutorizacion = async (req, res) => {
   try {
     const empresa = await Empresa.findByPk(req.usuario.empresa_id, { attributes: ['pin_autorizacion_activo'] });
@@ -121,6 +121,9 @@ export const setPinAutorizacion = async (req, res) => {
     const empresa = await Empresa.findByPk(req.usuario.empresa_id);
     if (!empresa) return res.status(404).json({ error: 'Empresa no encontrada' });
     if (activo) {
+      if (empresa.pin_autorizacion_activo === true && empresa.pin_autorizacion_hash) {
+        return res.json({ activo: true, mensaje: 'El PIN ya estaba activo; sigue siendo el mismo' });
+      }
       const codigo = await guardarPinNuevo(req, empresa);
       return res.json({ activo: true, codigo, mensaje: 'PIN activado' });
     }
@@ -130,17 +133,6 @@ export const setPinAutorizacion = async (req, res) => {
     return res.json({ activo: false, mensaje: 'PIN desactivado' });
   } catch (error) {
     return res.status(500).json({ error: 'No se pudo guardar la configuracion del PIN' });
-  }
-};
-
-export const regenerarPinAutorizacion = async (req, res) => {
-  try {
-    const empresa = await Empresa.findByPk(req.usuario.empresa_id);
-    if (!empresa) return res.status(404).json({ error: 'Empresa no encontrada' });
-    const codigo = await guardarPinNuevo(req, empresa);
-    return res.json({ activo: true, codigo, mensaje: 'PIN nuevo generado' });
-  } catch (error) {
-    return res.status(500).json({ error: 'No se pudo generar el PIN' });
   }
 };
 

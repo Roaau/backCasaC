@@ -9,6 +9,7 @@ import {
     exportarExcel
 } from '../controllers/reportesController.js';
 import { listarBitacora } from '../controllers/bitacoraController.js';
+import { getReporteAjustes } from '../controllers/ajustesController.js';
 const router = express.Router();
 
 router.post('/ventas', getReporteVentas);
@@ -19,4 +20,5 @@ router.post('/inventario', getReporteInventario);
 router.post('/graficas', getDatosGraficas);
 router.post('/exportar-excel', exportarExcel);
 router.get('/bitacora', listarBitacora);
+router.post('/ajustes', getReporteAjustes);
 export default router;

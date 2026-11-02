@@ -1,3 +1,4 @@
+jest.mock('../utils/auditoria.js', () => ({ registrarAuditoria: jest.fn().mockResolvedValue(true) }));
 jest.mock('../utils/lotes.js', () => ({ __esModule: true, descontarLotes: jest.fn().mockResolvedValue([]), registrarEntradaLote: jest.fn().mockResolvedValue(null), existenciaVigente: jest.fn().mockResolvedValue(null), actualizarCaducidadProducto: jest.fn(), listarLotes: jest.fn().mockResolvedValue([]) }));
 jest.mock('sequelize', () => ({
   Op: { between: Symbol('between') }
@@ -53,7 +54,8 @@ const { default: Proveedor } = require('../models/Proveedor.js');
 const { default: StockSucursal } = require('../models/StockSucursalModel.js');
 const { default: MovimientoInventario } = require('../models/MovimientoInventario.js');
 const { resolverScopeSucursales, resolverSucursalOperativa } = require('../utils/scope.js');
-const { listarCompras, crearCompra } = require('../controllers/comprasController.js');
+const { listarCompras, crearCompra, precioVentaValido, compraCambiaPrecio } = require('../controllers/comprasController.js');
+const { registrarAuditoria } = require('../utils/auditoria.js');
 
 const mockRes = () => {
   const res = {};
@@ -160,5 +162,70 @@ describe('Compras - aislamiento multiempresa/sucursal', () => {
     expect(res.status).toHaveBeenCalledWith(403);
     expect(StockSucursal.findOne).not.toHaveBeenCalled();
     expect(tx.rollback).toHaveBeenCalled();
+  });
+
+  const prepararCompra = () => {
+    resolverSucursalOperativa.mockResolvedValue(4);
+    Compra.create.mockResolvedValue({ compra_id: 31 });
+    DetalleCompra.create.mockResolvedValue({});
+    StockSucursal.findOne.mockResolvedValue({ stock_actual: 2, update: jest.fn().mockResolvedValue(true) });
+    MovimientoInventario.create.mockResolvedValue({});
+    Producto.update.mockResolvedValue([1]);
+    Producto.findOne.mockResolvedValue({ producto_id: 6, nombre: 'Cemento', codigo_barras: '750', unidad_venta: 'pieza', precio_menudeo: '120.00' });
+  };
+
+  test('si el precio no cambia no se toca el precio de venta ni la bitacora', async () => {
+    prepararCompra();
+    registrarAuditoria.mockClear();
+    const req = {
+      usuario: { id: 9, empresa_id: 15, sucursal_id: 4, rol: 2 },
+      body: { items: [{ producto_id: 6, nombre_producto: 'Cemento', cantidad: 1, costo_unitario: 100, precio_venta: 120 }] }
+    };
+    await crearCompra(req, mockRes());
+    expect(Producto.update).toHaveBeenCalledWith({ precio_compra: 100 }, expect.anything());
+    expect(registrarAuditoria).not.toHaveBeenCalled();
+  });
+
+  test('si se captura precio de venta, actualiza el precio del producto en la misma compra', async () => {
+    prepararCompra();
+    const req = {
+      usuario: { id: 9, empresa_id: 15, sucursal_id: 4, rol: 2 },
+      body: { items: [{ producto_id: 6, nombre_producto: 'Cemento', cantidad: 3, costo_unitario: 100, precio_venta: '135.555', motivo_precio: 'Subió con el proveedor' }] }
+    };
+    const res = mockRes();
+    await crearCompra(req, res);
+    expect(Producto.update).toHaveBeenCalledWith(
+      { precio_compra: 100, precio_menudeo: 135.56 },
+      { where: { producto_id: 6, empresa_id: 15 }, transaction: tx }
+    );
+    expect(res.status).toHaveBeenCalledWith(201);
+    expect(registrarAuditoria).toHaveBeenCalledWith(req, expect.objectContaining({
+      accion: 'PRECIO_CAMBIO',
+      entidad_id: 6,
+      detalle: expect.objectContaining({ antes: 120, despues: 135.56, motivo: 'Subió con el proveedor', origen: 'compra' })
+    }));
+  });
+
+  test('precio de venta invalido se rechaza antes de tocar el inventario', async () => {
+    prepararCompra();
+    const req = {
+      usuario: { id: 9, empresa_id: 15, sucursal_id: 4, rol: 2 },
+      body: { items: [{ producto_id: 6, nombre_producto: 'Cemento', cantidad: 3, costo_unitario: 100, precio_venta: -5 }] }
+    };
+    const res = mockRes();
+    await crearCompra(req, res);
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(StockSucursal.findOne).not.toHaveBeenCalled();
+    expect(tx.rollback).toHaveBeenCalled();
+  });
+
+  test('precioVentaValido y compraCambiaPrecio', () => {
+    expect(precioVentaValido(undefined)).toBeNull();
+    expect(precioVentaValido('')).toBeNull();
+    expect(precioVentaValido(19.999)).toBe(20);
+    expect(() => precioVentaValido(0)).toThrow();
+    expect(compraCambiaPrecio({ body: { items: [{ producto_id: 1, cantidad: 1 }] } })).toBe(false);
+    expect(compraCambiaPrecio({ body: { items: [{ producto_id: 1, precio_venta: 20 }] } })).toBe(true);
+    expect(compraCambiaPrecio({ body: { items: [{ nombre_producto: 'Nuevo', precio_venta: 20 }] } })).toBe(false);
   });
 });

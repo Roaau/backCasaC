@@ -12,6 +12,26 @@ import { resolverScopeSucursales, resolverSucursalOperativa, responderErrorScope
 import { rangoFechasReporte } from "../utils/fechas.js";
 import { cantidadValida } from "../utils/giros.js";
 import { registrarEntradaLote } from '../utils/lotes.js';
+import { registrarAuditoria } from '../utils/auditoria.js';
+
+const MOTIVO_PRECIO_DEFAULT = 'Subió con el proveedor';
+
+/**
+ * Nuevo precio de venta capturado en la compra (opcional).
+ * Regresa el numero redondeado a centavos, null si no se capturo, o lanza 400 si es invalido.
+ */
+export const precioVentaValido = (valor) => {
+  if (valor === undefined || valor === null || valor === '') return null;
+  const n = Number(valor);
+  if (!Number.isFinite(n) || n <= 0 || n > 9999999) {
+    throw Object.assign(new Error('El precio de venta debe ser mayor a 0'), { status: 400 });
+  }
+  return Math.round(n * 100) / 100;
+};
+
+/** La compra cambia algun precio de venta (para pedir el PIN del dueno si esta activo). */
+export const compraCambiaPrecio = (req) =>
+  Array.isArray(req.body?.items) && req.body.items.some(i => i?.producto_id && i.precio_venta !== undefined && i.precio_venta !== null && i.precio_venta !== '');
 
 export const listarCompras = async (req, res) => {
   try {
@@ -92,9 +112,12 @@ export const crearCompra = async (req, res) => {
       if (!cantidadValida(item.cantidad, unidad)) {
         throw Object.assign(new Error(`Cantidad invalida en ${item.nombre_producto || 'un producto'}`), { status: 400 });
       }
+      precioVentaValido(item.precio_venta);
     }
 
     const total = Math.round(items.reduce((s, i) => s + Number(i.costo_unitario) * Number(i.cantidad), 0) * 100) / 100;
+    // Cambios de precio de venta hechos en esta compra (se guardan en la bitacora al terminar)
+    const cambiosPrecio = [];
 
     const compra = await Compra.create({
       empresa_id:  req.usuario.empresa_id,
@@ -162,8 +185,24 @@ export const crearCompra = async (req, res) => {
           transaction: t
         });
         // Actualiza costo en producto (antes usaba precio_costo, columna que no existe)
+        // y, si se capturo, el nuevo precio de venta (menudeo) para no tener que ir a Inventario
+        const cambios = { precio_compra: Number(item.costo_unitario) };
+        const precioVenta = precioVentaValido(item.precio_venta);
+        const prodActual = productosCompra.get(Number(item.producto_id));
+        const precioAnterior = prodActual?.precio_menudeo != null ? Number(prodActual.precio_menudeo) : null;
+        if (precioVenta !== null && precioVenta !== precioAnterior) {
+          cambios.precio_menudeo = precioVenta;
+          cambiosPrecio.push({
+            producto_id: Number(item.producto_id),
+            nombre: prodActual?.nombre ?? item.nombre_producto,
+            antes: precioAnterior,
+            despues: precioVenta,
+            costo: Number(item.costo_unitario),
+            motivo: String(item.motivo_precio || MOTIVO_PRECIO_DEFAULT).trim().slice(0, 120)
+          });
+        }
         await Producto.update(
-          { precio_compra: Number(item.costo_unitario) },
+          cambios,
           { where: { producto_id: item.producto_id, empresa_id: req.usuario.empresa_id }, transaction: t }
         );
       }
@@ -188,7 +227,16 @@ export const crearCompra = async (req, res) => {
     }
 
     await t.commit();
-    res.status(201).json({ mensaje: 'Compra registrada', compra_id: compra.compra_id });
+    for (const c of cambiosPrecio) {
+      await registrarAuditoria(req, {
+        accion: 'PRECIO_CAMBIO',
+        entidad: 'productos',
+        entidad_id: c.producto_id,
+        sucursal_id,
+        detalle: { ...c, origen: 'compra', compra_id: compra.compra_id, folio: folio || null }
+      });
+    }
+    res.status(201).json({ mensaje: 'Compra registrada', compra_id: compra.compra_id, precios_actualizados: cambiosPrecio.length });
   } catch (err) {
     await t.rollback();
     responderErrorScope(res, err);
